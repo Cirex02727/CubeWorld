@@ -1,19 +1,15 @@
 #include "Application.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#define GLFW_INCLUDE_NONE
-#define GLFW_INCLUDE_OPENGL
-#include <GL/glew.h>
-#include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
+#include "Core.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_opengl3.h>
 
-#include "Core.h"
 #include "utils/Instrumentor.h"
+
+#include <stdio.h>
+#include <stdlib.h>
 
 static void glfw_error_callback(int error, const char* description)
 {
@@ -61,7 +57,8 @@ bool Application::Init()
 	ImGui_ImplGlfw_InitForOpenGL(m_WindowHandle, true);
 	ImGui_ImplOpenGL3_Init("#version 430");
 
-	m_World = new CubeWorld();
+	m_World = new CubeWorld(&m_Specification);
+	m_World->Init();
 
 	return true;
 }

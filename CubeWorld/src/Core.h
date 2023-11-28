@@ -1,6 +1,12 @@
 #pragma once
 
+#define GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_OPENGL
 #include <GL/glew.h>
+#include <GLFW/glfw3.h>
+
+#include <imgui/imgui.h>
+
 #include <iostream>
 
 #ifdef _DEBUG

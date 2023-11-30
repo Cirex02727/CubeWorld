@@ -51,6 +51,8 @@ public:
 
 	void Render();
 
+	void ImGuiRender();
+
 	void OnResize();
 
 private:
@@ -75,7 +77,7 @@ private:
 	WorldSettings m_Settings;
 	WorldGenerationSettings m_GenerationSettings;
 
-	std::unordered_map<glm::vec3, Chunk> m_Chunks;
+	std::unordered_map<glm::vec3, Chunk*> m_Chunks;
 
 	std::unique_ptr<ThreadPool> m_ThreadPool;
 	std::unique_ptr<SimplexNoise> m_Noise;
@@ -83,5 +85,7 @@ private:
 	std::unique_ptr<Texture> m_Texture, m_CrosshairTexture;
 	std::unique_ptr<Shader> m_Shader, m_CrosshairShader, m_InteractShader;
 
-	uint32_t m_CrosshairVAO, m_CrosshairVBO, m_InteractVAO, m_InteractVBO, m_InteractIBO;
+	uint32_t m_CrosshairVAO = 0, m_CrosshairVBO = 0, m_InteractVAO = 0, m_InteractVBO = 0, m_InteractIBO = 0;
+
+	bool m_DebugNormal = false, m_DebugUV = false;
 };

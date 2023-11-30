@@ -57,6 +57,8 @@ bool Application::Init()
 	ImGui_ImplGlfw_InitForOpenGL(m_WindowHandle, true);
 	ImGui_ImplOpenGL3_Init("#version 430");
 
+	Input::Init(m_WindowHandle);
+
 	m_World = new CubeWorld(&m_Specification);
 	m_World->Init();
 
@@ -76,16 +78,15 @@ void Application::Run()
 		// Update
 		m_World->Update(m_TimeStep);
 
+		// Render
+		m_World->Render();
+
 		// Start the Dear ImGui frame
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		// Render
-		GLCall(glClearColor(0.0f, 0.0f, 0.0f, 1.0f));
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-		m_World->Render();
+		m_World->ImGuiRender();
 
 		// Rendering
 		ImGui::Render();

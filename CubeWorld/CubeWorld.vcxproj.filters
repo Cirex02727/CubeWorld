@@ -45,7 +45,7 @@
     <ClCompile Include="src\vendor\stb_image\stb_image.cpp">
       <Filter>File di origine</Filter>
     </ClCompile>
-    <ClCompile Include="src\EntryPoint.h">
+    <ClCompile Include="src\EntryPoint.cpp">
       <Filter>File di origine</Filter>
     </ClCompile>
     <ClCompile Include="src\utils\input\Input.cpp">

@@ -56,4 +56,6 @@ private:
 	uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
 
 	glm::vec3 m_Velocity, m_Acceleration;
+
+	bool m_PrevWindowFocus = false;
 };

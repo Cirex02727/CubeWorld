@@ -3504,7 +3504,7 @@ ImGuiContext* ImGui::CreateContext(ImFontAtlas* shared_font_atlas)
     ImGuiContext* prev_ctx = GetCurrentContext();
     ImGuiContext* ctx = IM_NEW(ImGuiContext)(shared_font_atlas);
     SetCurrentContext(ctx);
-    Initialize();
+    Fill();
     if (prev_ctx != NULL)
         SetCurrentContext(prev_ctx); // Restore previous context if any, else keep new one.
     return ctx;
@@ -3534,7 +3534,7 @@ static const ImGuiLocEntry GLocalizationEntriesEnUS[] =
     { ImGuiLocKey_WindowingUntitled,    "(Untitled)"                            },
 };
 
-void ImGui::Initialize()
+void ImGui::Fill()
 {
     ImGuiContext& g = *GImGui;
     IM_ASSERT(!g.Initialized && !g.SettingsLoaded);

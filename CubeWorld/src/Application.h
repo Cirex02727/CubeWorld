@@ -20,8 +20,7 @@ struct ApplicationSpecification
 class Application
 {
 public:
-	Application(const ApplicationSpecification& applicationSpecification = ApplicationSpecification())
-		: m_Specification(applicationSpecification) {}
+	Application() {}
 	~Application() {}
 
 	bool Init();

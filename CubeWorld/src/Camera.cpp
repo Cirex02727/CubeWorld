@@ -14,12 +14,21 @@ bool Camera::OnUpdate(float ts)
 {
 	if (!Input::IsMouseButtonDown(MouseButton::Right))
 	{
-		Input::SetCursorMode(CursorMode::Normal);
+		if (m_PrevWindowFocus)
+		{
+			Input::SetCursorMode(CursorMode::Normal);
+			m_PrevWindowFocus = false;
+		}
+
 		return false;
 	}
+	else if (Input::IsMouseButtonDown(MouseButton::Right) && !m_PrevWindowFocus)
+	{
+		Input::SetCursorMode(CursorMode::Locked);
+		m_PrevWindowFocus = true;
 
-	Input::SetCursorMode(CursorMode::Locked);
-
+		m_LastMousePosition = Input::GetMousePosition();
+	}
 
 	glm::vec3 movement{};
 	bool moved = Move(&movement);
@@ -29,14 +38,11 @@ bool Camera::OnUpdate(float ts)
 	if (Input::IsKey(KeyCode::LeftControl))
 		movement *= 10;
 
-	m_Acceleration = moved ? movement : glm::vec3{};
-	m_Velocity += m_Acceleration * ts;
-	m_Velocity *= 0.9;
+	// m_Acceleration = moved ? movement : glm::vec3{};
+	// m_Velocity += m_Acceleration * ts;
+	// m_Velocity *= 0.9;
 
-	m_Position += m_Velocity * ts;
-
-	moved = true;
-
+	m_Position += movement * ts;
 
 	moved |= Rotate();
 

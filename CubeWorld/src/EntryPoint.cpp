@@ -2,10 +2,7 @@
 
 int main(int argc, char** argv)
 {
-	ApplicationSpecification spec;
-	spec.Name = "CubeWorld";
-
-	Application app(spec);
+	Application app;
 	if (!app.Init())
 		return -1;
 

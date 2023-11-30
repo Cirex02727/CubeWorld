@@ -2,6 +2,9 @@
 
 #include "Core.h"
 
+#include "utils/Timer.h"
+#include "utils/Benchmark.h"
+
 #include "Application.h"
 
 void CubeWorld::Init()
@@ -27,6 +30,25 @@ void CubeWorld::Init()
 	m_Shader = std::make_unique<Shader>("res/shaders/terrain.shader");
 	m_Shader->Bind();
 	m_Shader->SetUniform1i("u_Texture", 0);
+
+	{
+		ScopedTimer t("Chunk!");
+
+		const glm::vec3 pos{ 0.0f, 0.0f, 0.0f };
+		
+		Chunk*  chunk = new Chunk{ pos };
+		chunk->Fill(m_Noise.get());
+
+		Mesh m;
+		chunk->GenerateMesh(m);
+		/*Benchmark::Bench(1'000, [&chunk, &m]() {
+			chunk->GenerateMesh(m);
+		}, [&m]() { m.vertices.clear(); m.indices.clear(); });*/
+
+		chunk->UploadMesh(m);
+
+		m_Chunks[pos] = chunk;
+	}
 
 	// To Implement
 	// Neighbors/Update Coords
@@ -223,6 +245,13 @@ void CubeWorld::InitInteract()
 
 CubeWorld::~CubeWorld()
 {
+	GLCall(glDeleteVertexArrays(1, &m_CrosshairVAO));
+	GLCall(glDeleteBuffers(1, &m_CrosshairVBO));
+
+	GLCall(glDeleteVertexArrays(1, &m_InteractVAO));
+	GLCall(glDeleteBuffers(1, &m_InteractVBO));
+	GLCall(glDeleteBuffers(1, &m_InteractIBO));
+
 	GLCall(glDeleteVertexArrays(1, &m_FBOQuadVAO));
 	GLCall(glDeleteBuffers(1, &m_FBOQuadVBO));
 
@@ -233,13 +262,46 @@ CubeWorld::~CubeWorld()
 
 void CubeWorld::Update(float timestep)
 {
+	m_Camera->OnUpdate(timestep);
 }
 
 void CubeWorld::Render()
 {
+	GLCall(glClearColor(0.0f, 0.0f, 0.0f, 1.0f));
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	const glm::mat4& VP = m_Camera->GetViewProjection();
+
+	m_Shader->Bind();
+	m_Shader->SetUniformMat4f("u_VP", VP);
+
+	m_Texture->Bind();
+
+	const glm::vec3& camPos = m_Camera->GetPosition();
+	m_Shader->SetUniform3fv("u_CamPos", 1, &camPos.x);
+
+	m_Shader->SetUniform1i("u_DebugNormal", m_DebugNormal);
+	m_Shader->SetUniform1i("u_DebugUV", m_DebugUV);
+
+	for (const auto& [_, chunk] : m_Chunks)
+		chunk->Render(m_Shader.get());
+}
+
+void CubeWorld::ImGuiRender()
+{
 	ImGuiIO& io = ImGui::GetIO();
 
 	ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+
+	const glm::vec3& camPos = m_Camera->GetPosition();
+	ImGui::Text("Camera Position: %.1f, %.1f, %.1f", camPos.x, camPos.y, camPos.z);
+	const glm::vec3& camDir = m_Camera->GetDirection();
+	ImGui::Text("Camera Direction: %.1f, %.1f, %.1f", camDir.x, camDir.y, camDir.z);
+
+	ImGui::Checkbox("Debug Normal: ", &m_DebugNormal);
+	if (m_DebugNormal) m_DebugUV = false;
+	ImGui::Checkbox("Debug UV: ", &m_DebugUV);
+	if (m_DebugUV) m_DebugNormal = false;
 }
 
 void CubeWorld::OnResize()

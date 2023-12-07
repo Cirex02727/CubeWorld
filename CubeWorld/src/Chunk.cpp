@@ -127,8 +127,9 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
                             continue;
                         }
 
-                        char ao  = FindAO(chunks, x, d, backFace);
-                        char ao1 = FindAO(chunks, x, d, backFace);
+                        // TODO:
+                        // char ao  = FindAO(chunks, x, d, backFace);
+                        // char ao1 = FindAO(chunks, x, d, backFace);
 
                         mask[n++] = backFace ? voxelFace1 : voxelFace;
                     }

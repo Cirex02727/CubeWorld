@@ -8,13 +8,15 @@
 
 struct GLFWwindow;
 
-struct ApplicationSpecification
+struct WindowSpecification
 {
-	std::string Name = "Base App";
 	uint32_t Width = 960;
 	uint32_t Height = 540;
 
 	float ScreenScaleFactor = 3;
+
+	int MaxFps = 120;
+	float MaxDeltaTime = 1.0f / MaxFps;
 };
 
 class Application
@@ -29,13 +31,14 @@ public:
 
 	void Shutdown();
 
+	void OnWindowResize(int width, int height);
+
 private:
-	ApplicationSpecification m_Specification;
+	WindowSpecification m_Specification;
 	GLFWwindow* m_WindowHandle = nullptr;
 
 	CubeWorld* m_World = nullptr;
-
-	float m_TimeStep = 0.0f;
-	float m_FrameTime = 0.0f;
+	
+	float m_DeltaTime = 0.0f;
 	float m_LastFrameTime = 0.0f;
 };

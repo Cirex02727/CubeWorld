@@ -1,7 +1,10 @@
 #include "Chunk.h"
 
 #include "Core.h"
-#include <utils/Timer.h>
+#include "CubeWorld.h"
+
+#include "utils/Timer.h"
+#include "utils/Instrumentor.h"
 
 Chunk::~Chunk()
 {
@@ -13,6 +16,10 @@ Chunk::~Chunk()
 
 void Chunk::Fill(SimplexNoise* noise)
 {
+    PROFILE_FUNCTION();
+
+    m_Stage = Stage::Filling;
+
     m_Data = new uint32_t[CHUNK_SIZEQ]{};
 
 	// Fill Density
@@ -20,11 +27,11 @@ void Chunk::Fill(SimplexNoise* noise)
     if (data == nullptr)
         return;
 
-    float scale = 0.01f;
+    float scale = 0.00065f;
 
     for (uint16_t z = 0; z < CHUNK_SIZE; ++z)
         for (uint16_t x = 0; x < CHUNK_SIZE; ++x)
-            data[x + z * CHUNK_SIZE] = (uint16_t)((noise->fractal(5, (x + m_Coord.x) * scale, (z + m_Coord.z) * scale) + 1) * 0.5f * 25.0f);
+            data[x + z * CHUNK_SIZE] = (uint16_t)((noise->fractal(5, (x + m_Coord.x) * scale, (z + m_Coord.z) * scale) + 1) * 0.5f * 170.66666f);
 
     srand(unsigned int(time(NULL)));
 
@@ -44,10 +51,27 @@ void Chunk::Fill(SimplexNoise* noise)
         }
 
     delete[] data;
+
+    m_Stage = Stage::Filled;
 }
 
-void Chunk::GenerateMesh(Mesh& mesh)
+void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
 {
+    PROFILE_FUNCTION();
+
+    m_Stage = Stage::Building;
+
+    // ZXY
+    Chunk* chunks[27];
+    // -Z-X-Y | -Z-X | -Z-X+Y | -Z-Y | -Z | -Z+Y | -Z+X-Y | -Z+X | -Z+X+Y
+    //   -X-Y |   -X |   -X+Y |   -Y |        +Y |   +X-Y |   +X |   +X+Y
+    // +Z-X-Y | +Z-X | +Z-X+Y | +Z-Y | +Z | +Z+Y | +Z+X-Y | +Z+X | +Z+X+Y
+    if (!world->GetChunkNeighbors(this, m_Coord, chunks))
+    {
+        m_Stage = Stage::WaitingNeighbors;
+        return;
+    }
+
     int i, j, k, l, w, h, u, v, n = 0;
     FaceSide side;
 
@@ -92,17 +116,26 @@ void Chunk::GenerateMesh(Mesh& mesh)
                 for (x[v] = 0; x[v] < CHUNK_SIZE; ++x[v])
                     for (x[u] = 0; x[u] < CHUNK_SIZE; ++x[u])
                     {
-                        voxelFace  = (x[d] >= 0)             ? m_Data[ x[0]         +  x[1]         * CHUNK_SIZE +  x[2]         * CHUNK_SIZES] : 0;
-                        voxelFace1 = (x[d] < CHUNK_SIZE - 1) ? m_Data[(x[0] + q[0]) + (x[1] + q[1]) * CHUNK_SIZE + (x[2] + q[2]) * CHUNK_SIZES] : 0;
+                        voxelFace  = (x[d] >= 0)             ? m_Data[ x[0]         +  x[1]         * CHUNK_SIZE +  x[2]         * CHUNK_SIZES]
+                            : GetNeighborBlock(chunks, x, d, false, CHUNK_SIZE - 1);
+                        voxelFace1 = (x[d] < CHUNK_SIZE - 1) ? m_Data[(x[0] + q[0]) + (x[1] + q[1]) * CHUNK_SIZE + (x[2] + q[2]) * CHUNK_SIZES]
+                            : GetNeighborBlock(chunks, x, d,  true,              0);
 
-                        mask[n++] = (voxelFace && voxelFace1 && voxelFace == voxelFace1)
-                            ? 0 : (backFace ? voxelFace1 : voxelFace);
+                        if (voxelFace == voxelFace1)
+                        {
+                            mask[n++] = 0;
+                            continue;
+                        }
+
+                        char ao  = FindAO(chunks, x, d, backFace);
+                        char ao1 = FindAO(chunks, x, d, backFace);
+
+                        mask[n++] = backFace ? voxelFace1 : voxelFace;
                     }
 
                 ++x[d];
 
                 n = 0;
-
                 for (j = 0; j < CHUNK_SIZE; ++j)
                     for (i = 0; i < CHUNK_SIZE;)
                     {
@@ -185,14 +218,6 @@ void Chunk::GenerateMesh(Mesh& mesh)
                             //     mask[n],
                             //     backFace);
                         }
-
-                        // TODO:
-                        /*
-                        uint32_t* start = mask + n;
-                        int end = h * CHUNK_SIZE;
-                        for (l = 0; l < end; l += CHUNK_SIZE)
-                            memset(start + l, 0, w * sizeof(int));
-                        */
                         for (l = 0; l < h; ++l)
                             for (k = 0; k < w; ++k)
                                 mask[n + k + l * CHUNK_SIZE] = 0;
@@ -202,16 +227,12 @@ void Chunk::GenerateMesh(Mesh& mesh)
                     }
             }
         }
+    
+    m_Stage = Stage::Built;
 }
 
-void Chunk::UploadMesh(Mesh& mesh)
+void Chunk::UploadMesh(const Mesh& mesh)
 {
-    if (mesh.vertices.size() <= 0)
-    {
-        m_IndicesCount = 0;
-        return;
-    }
-
     GLCall(glGenVertexArrays(1, &m_VAO));
     GLCall(glGenBuffers(2, m_VBIO));
 
@@ -228,6 +249,8 @@ void Chunk::UploadMesh(Mesh& mesh)
 
     GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBIO[1]));
     GLCall(glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_IndicesCount * sizeof(uint32_t), &mesh.indices[0], GL_STATIC_DRAW));
+
+    m_Stage = Stage::Uploaded;
 }
 
 void Chunk::Render(Shader* shader) const
@@ -236,4 +259,31 @@ void Chunk::Render(Shader* shader) const
 
     GLCall(glBindVertexArray(m_VAO));
     GLCall(glDrawElements(GL_TRIANGLES, m_IndicesCount, GL_UNSIGNED_INT, (void*)0));
+}
+
+uint32_t Chunk::GetNeighborBlock(Chunk* chunks[26], int x[3], int d, bool isNeighF, int v) const
+{
+    int neighborIndex = 0, x_ = x[0], y_ = x[1], z_ = x[2];
+    if (d == 0) { neighborIndex = isNeighF ? 16 : 10; x_ = v; }
+    else if (d == 1)
+    {
+        if (isNeighF)
+        {
+            if (m_Coord.y == CHUNK_MAX_HEIGHT - CHUNK_SIZE)
+                return 0;
+
+            neighborIndex = 14;
+        }
+        else
+        {
+            if (m_Coord.y == 0)
+                return 0;
+
+            neighborIndex = 12;
+        }
+        y_ = v;
+    }
+    else { neighborIndex = isNeighF ? 22 : 4; z_ = v; }
+
+    return chunks[neighborIndex]->GetBlock(x_ + y_ * CHUNK_SIZE + z_ * CHUNK_SIZES);
 }

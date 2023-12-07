@@ -11,11 +11,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static void glfw_error_callback(int error, const char* description)
-{
-	fprintf(stderr, "Glfw Error %d: %s\n", error, description);
-}
-
 bool Application::Init()
 {
 	// Setup GLFW window
@@ -26,7 +21,7 @@ bool Application::Init()
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-	m_WindowHandle = glfwCreateWindow(m_Specification.Width, m_Specification.Height, m_Specification.Name.c_str(), NULL, NULL);
+	m_WindowHandle = glfwCreateWindow(m_Specification.Width, m_Specification.Height, "Cube World", NULL, NULL);
 	if (!m_WindowHandle)
 	{
 		glfwTerminate();
@@ -39,7 +34,10 @@ bool Application::Init()
 	if (glewInit() != GLEW_OK)
 		std::cout << "Error!" << std::endl;
 
-	glfwSetErrorCallback(glfw_error_callback);
+	glfwSetErrorCallback([](int error, const char* description)
+	{
+		fprintf(stderr, "Glfw Error %d: %s\n", error, description);
+	});
 
 	PROFILE_BEGIN_SESSION("Application", "result.json");
 
@@ -62,6 +60,14 @@ bool Application::Init()
 	m_World = new CubeWorld(&m_Specification);
 	m_World->Init();
 
+	glfwSetWindowUserPointer(m_WindowHandle, this);
+
+	glfwSetWindowSizeCallback(m_WindowHandle, [](GLFWwindow* window, int width, int height)
+	{
+		Application& app = *(Application*)glfwGetWindowUserPointer(window);
+		app.OnWindowResize(width, height);
+	});
+
 	return true;
 }
 
@@ -73,10 +79,18 @@ void Application::Run()
 	// Main loop
 	while (!glfwWindowShouldClose(m_WindowHandle))
 	{
+		float time = (float)glfwGetTime();
+		m_DeltaTime = time - m_LastFrameTime;
+
+		if (m_DeltaTime < m_Specification.MaxDeltaTime)
+			continue;
+
+		m_LastFrameTime = time;
+
 		glfwPollEvents();
 
 		// Update
-		m_World->Update(m_TimeStep);
+		m_World->Update(m_DeltaTime);
 
 		// Render
 		m_World->Render();
@@ -93,11 +107,6 @@ void Application::Run()
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
 		glfwSwapBuffers(m_WindowHandle);
-
-		float time = (float)glfwGetTime();
-		m_FrameTime = time - m_LastFrameTime;
-		m_TimeStep = glm::min<float>(m_FrameTime, 0.0333f);
-		m_LastFrameTime = time;
 	}
 }
 
@@ -113,4 +122,15 @@ void Application::Shutdown()
 
 	glfwDestroyWindow(m_WindowHandle);
 	glfwTerminate();
+}
+
+void Application::OnWindowResize(int width, int height)
+{
+	if ((m_Specification.Width != width && m_Specification.Height != height) || width == 0 || height == 0)
+		return;
+
+	m_Specification.Width = width;
+	m_Specification.Height = height;
+
+	m_World->OnWindowResize();
 }

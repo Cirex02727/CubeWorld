@@ -7,8 +7,86 @@
 
 #include "Application.h"
 
+glm::vec3& border_vec3(glm::vec3& v, int d)
+{
+	switch (d)
+	{
+	case 0: v.x = CHUNK_SIZE - 1; break;
+	case 1: v.y = CHUNK_SIZE - 1; break;
+	case 2: v.z = CHUNK_SIZE - 1; break;
+	}
+	return v;
+}
+
+inline glm::vec3& border_vec3_1(glm::vec3& v, int d)
+{
+	switch (d)
+	{
+	case 0: v.x = CHUNK_SIZE - 1; break;
+	case 1: v.y = CHUNK_SIZE - 1; break;
+	case 2: v.z = CHUNK_SIZE - 1; break;
+	}
+	return v;
+}
+
+int neighbor_index(int d, bool backface)
+{
+	switch (d)
+	{
+	case 0:  return backface ? 0 : 1;
+	case 1:  return backface ? 2 : 3;
+	case 2:  return backface ? 4 : 5;
+	default: return -1;
+	}
+}
+
+inline int neighbor_index_1(int d, bool backface)
+{
+	switch (d)
+	{
+	case 0:  return backface ? 0 : 1;
+	case 1:  return backface ? 2 : 3;
+	case 2:  return backface ? 4 : 5;
+	default: return -1;
+	}
+}
+
 void CubeWorld::Init()
 {
+	bool backface = true;
+	int d = 1;
+
+	glm::vec3 v{};
+
+	uint32_t neighboars[26]{};
+
+	int count = 1'000;
+
+	Benchmark::Bench(count, [&]()
+	{
+		uint32_t chunk = neighboars[neighbor_index(d, backface)];
+		border_vec3(v, d);
+	});
+
+	Benchmark::Bench(count, [&]()
+	{
+		uint32_t chunk = neighboars[neighbor_index_1(d, backface)];
+		border_vec3(v, d);
+	});
+
+	Benchmark::Bench(count, [&]()
+	{
+		uint32_t chunk = neighboars[neighbor_index(d, backface)];
+		border_vec3_1(v, d);
+	});
+
+	Benchmark::Bench(count, [&]()
+	{
+		uint32_t chunk = neighboars[neighbor_index_1(d, backface)];
+		border_vec3_1(v, d);
+	});
+
+
 	SettupOpenGLSettings();
 
 	InitFramebuffer();
@@ -20,10 +98,12 @@ void CubeWorld::Init()
 	m_Noise = std::make_unique<SimplexNoise>(m_GenerationSettings.Frequency, m_GenerationSettings.Amplitude, m_GenerationSettings.Lacunarity, m_GenerationSettings.Persistence);
 
 	m_Camera = std::make_unique<Camera>(60.0f, 0.05f, 3000.0f);
-	m_Camera->SetPosition({ -35.6f, 49.9f, 29.3f });
+	m_Camera->SetPosition({ -35.6f, 150.0f, 29.3f });
 	m_Camera->SetDirection({ 0.6f, -0.4f, 0.7f });
-	m_Camera->OnResize(m_WidthScaled, m_HeightScaled);
+	m_Camera->WindowResize(m_WidthScaled, m_HeightScaled);
 	m_Camera->RecalculateView();
+
+	m_Frustum = std::make_unique<Frustum>();
 
 	m_Texture = std::make_unique<Texture>("res/textures/terrain.png", GL_NEAREST, GL_NEAREST, true, true, true);
 
@@ -31,24 +111,14 @@ void CubeWorld::Init()
 	m_Shader->Bind();
 	m_Shader->SetUniform1i("u_Texture", 0);
 
-	{
-		ScopedTimer t("Chunk!");
+	m_GenerationTimer.Reset();
 
-		const glm::vec3 pos{ 0.0f, 0.0f, 0.0f };
-		
-		Chunk*  chunk = new Chunk{ pos };
-		chunk->Fill(m_Noise.get());
-
-		Mesh m;
-		chunk->GenerateMesh(m);
-		/*Benchmark::Bench(1'000, [&chunk, &m]() {
-			chunk->GenerateMesh(m);
-		}, [&m]() { m.vertices.clear(); m.indices.clear(); });*/
-
-		chunk->UploadMesh(m);
-
-		m_Chunks[pos] = chunk;
-	}
+	int i = 0, renderDist = m_Settings.RenderDistance, maxRenderDist = m_Settings.MaxRenderDistance;
+	m_UpdateCoord.resize((size_t)(renderDist * 2 + 1) * (size_t)(renderDist * 2 + 1) * CHUNK_Y_COUNT);
+	for (int z = -renderDist; z <= renderDist; z++)
+		for (int y = 0; y < CHUNK_Y_COUNT; y++)
+			for (int x = -renderDist; x <= renderDist; x++)
+				m_UpdateCoord[i++] = { x, y, z };
 
 	// To Implement
 	// Neighbors/Update Coords
@@ -72,13 +142,18 @@ void CubeWorld::SettupOpenGLSettings()
 
 	// GLCall(glEnable(GL_MULTISAMPLE));
 
-	bool VSync = true;
+	bool VSync = false;
 	GLCall(glfwSwapInterval(VSync));
 }
 
 void CubeWorld::InitFramebuffer()
 {
-	OnResize();
+	m_Width = m_Specification->Width;
+	m_Height = m_Specification->Height;
+
+	m_WidthScaled = (uint32_t)(m_Width * m_Specification->ScreenScaleFactor);
+	m_HeightScaled = (uint32_t)(m_Height * m_Specification->ScreenScaleFactor);
+
 
 	GLCall(glGenFramebuffers(1, &m_FBO));
 	GLCall(glBindFramebuffer(GL_FRAMEBUFFER, m_FBO));
@@ -262,7 +337,107 @@ CubeWorld::~CubeWorld()
 
 void CubeWorld::Update(float timestep)
 {
+	if (Input::IsKeyDown(KeyCode::H))
+		m_Settings.MaxRenderDistance++;
+
+	if (Input::IsKeyDown(KeyCode::G))
+		m_Settings.MaxRenderDistance--;
+
+	const glm::vec3 cameraChunk = glm::floor(m_Camera->GetPosition() * CHUNK_SIZE_INV);
+
+	{
+		int renderDist = m_Settings.RenderDistance, maxRenderDist = m_Settings.MaxRenderDistance;
+
+		if (m_GeneratingChunks.size() < 100 && std::abs(maxRenderDist - renderDist) > 0)
+		{
+			m_Settings.RenderDistance += glm::sign(maxRenderDist - renderDist);
+
+			int i = 0;
+			m_UpdateCoord.resize((size_t)(renderDist * 2 + 1) * (size_t)(renderDist * 2 + 1) * CHUNK_Y_COUNT);
+			for (int z = -renderDist; z <= renderDist; z++)
+				for (int y = 0; y < CHUNK_Y_COUNT; y++)
+					for (int x = -renderDist; x <= renderDist; x++)
+						m_UpdateCoord[i++] = { x, y, z };
+		}
+	}
+
+	for (const glm::vec3& updateCoord : m_UpdateCoord)
+	{
+		const glm::vec3 coord = glm::vec3{
+				(updateCoord.x + cameraChunk.x) * CHUNK_SIZE,
+				 updateCoord.y                  * CHUNK_SIZE,
+				(updateCoord.z + cameraChunk.z) * CHUNK_SIZE };
+		BuildChunk(coord);
+	}
+
+
 	m_Camera->OnUpdate(timestep);
+
+
+	uint16_t uploaded = 0;
+	while (m_ChunksUpload.size() > 0 && uploaded < 15)
+	{
+		const auto& [chunk, mesh] = m_ChunksUpload.front();
+
+		// I take the chunk and if it has a mesh I upload it to the GPU
+		const glm::vec3& coord = chunk->m_Coord;
+		{
+			size_t vertices = mesh.vertices.size();
+			if (vertices <= 0)
+			{
+				std::lock_guard<std::mutex> uploadL(m_ChunksUploadLock);
+
+				m_ChunksUpload.pop();
+				continue;
+			}
+
+			chunk->UploadMesh(mesh);
+
+
+			std::lock_guard<std::mutex> chunkL(m_MeshedChunksLock);
+
+			if (!m_MeshedChunks.contains(coord))
+			{
+				m_MeshedChunks[coord] = chunk;
+				m_TotalBytes += vertices * sizeof(uint32_t);
+			}
+		}
+
+		{
+			std::lock_guard<std::mutex> generatingL(m_GeneratingChunksLock);
+			m_GeneratingChunks.erase(coord);
+		}
+
+		{
+			std::lock_guard<std::mutex> uploadL(m_ChunksUploadLock);
+			m_ChunksUpload.pop();
+		}
+
+		uploaded++;
+	}
+
+	//if (uploaded > 0)
+	//	std::cout << "Chunks Uploaded: " << uploaded << std::endl;
+
+	if (m_Settings.RenderDistance == m_Settings.MaxRenderDistance && m_ThreadPool->GetTaksCount() <= 0 && m_ChunksUpload.size() == 0 && !m_WorldGenerated)
+	{
+		m_WorldGenerated = true;
+		std::cout << "World Generation in " << m_GenerationTimer.ElapsedMillis() << " ms" << std::endl;
+	}
+
+
+	{
+		std::lock_guard<std::mutex> dirtyLock(m_DirtyChunksLock);
+
+		while (m_DirtyChunks.size() > 0)
+		{
+			Chunk* chunk = m_DirtyChunks.front();
+
+			UpdateChunkMesh(chunk);
+
+			m_DirtyChunks.pop();
+		}
+	}
 }
 
 void CubeWorld::Render()
@@ -283,8 +458,23 @@ void CubeWorld::Render()
 	m_Shader->SetUniform1i("u_DebugNormal", m_DebugNormal);
 	m_Shader->SetUniform1i("u_DebugUV", m_DebugUV);
 
-	for (const auto& [_, chunk] : m_Chunks)
-		chunk->Render(m_Shader.get());
+	m_Frustum->Update(m_Camera.get());
+
+	m_RenderedChunk = 0;
+
+	{
+		std::lock_guard<std::mutex> chunksL(m_MeshedChunksLock);
+
+		Shader* shader = m_Shader.get();
+		for (const auto& [coord, chunk] : m_MeshedChunks)
+		{
+			if (!m_Frustum->SphereIntersect(coord + HCHUNK_SIZE, SPHERE_CHUNK_RADIUS))
+				continue;
+
+			chunk->Render(shader);
+			++m_RenderedChunk;
+		}
+	}
 }
 
 void CubeWorld::ImGuiRender()
@@ -293,10 +483,23 @@ void CubeWorld::ImGuiRender()
 
 	ImGui::Text("%.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
 
+	if (ImGui::SliderInt("Max FPS", &m_Specification->MaxFps, 25, 240))
+		m_Specification->MaxDeltaTime = 1.0f / m_Specification->MaxFps;
+
 	const glm::vec3& camPos = m_Camera->GetPosition();
 	ImGui::Text("Camera Position: %.1f, %.1f, %.1f", camPos.x, camPos.y, camPos.z);
 	const glm::vec3& camDir = m_Camera->GetDirection();
 	ImGui::Text("Camera Direction: %.1f, %.1f, %.1f", camDir.x, camDir.y, camDir.z);
+
+	ImGui::Text("Render Distance: %d/%d", m_Settings.RenderDistance, m_Settings.MaxRenderDistance);
+
+
+	ImGui::Text("Chunks: %d/%d/%d", m_RenderedChunk, m_MeshedChunks.size(), m_Chunks.size());
+
+	ImGui::Text("Generating Chunks: %d", m_GeneratingChunks.size());
+
+	ImGui::Text("RAM Used: %s",  BytesToText((double)(m_Chunks.size() * CHUNK_SIZEQ * sizeof(uint32_t))).c_str());
+	ImGui::Text("VRAM Used: %s", BytesToText(m_TotalBytes).c_str());
 
 	ImGui::Checkbox("Debug Normal: ", &m_DebugNormal);
 	if (m_DebugNormal) m_DebugUV = false;
@@ -304,11 +507,243 @@ void CubeWorld::ImGuiRender()
 	if (m_DebugUV) m_DebugNormal = false;
 }
 
-void CubeWorld::OnResize()
+void CubeWorld::BuildChunk(const glm::vec3& coord, bool requestMesh)
+{
+	// Is Chunk Generating/Just Generated? If so then do not create new one
+	{
+		std::lock_guard<std::mutex> generatingL(m_GeneratingChunksLock);
+
+		if (m_GeneratingChunks.contains(coord))
+			return;
+	}
+
+	Chunk* chunk;
+	if (GetChunk(coord, &chunk))
+	{
+		std::lock_guard<std::mutex> chunkL(chunk->m_Lock);
+
+		if (chunk->IsStage(Chunk::Stage::Filled) && requestMesh)
+			SetChunkDirty(chunk, coord);
+
+		return;
+	}
+
+	{
+		std::lock_guard<std::mutex> generatingL(m_GeneratingChunksLock);
+		m_GeneratingChunks[coord] = chunk;
+	}
+
+	m_ThreadPool->enqueue([&, coord, requestMesh]()
+	{
+		Chunk* chunk = new Chunk{ coord };
+		chunk->Fill(m_Noise.get());
+
+		{
+			std::lock_guard<std::mutex> chunkL(m_ChunksLock);
+			m_Chunks[coord] = chunk;
+		}
+
+		if (!requestMesh)
+		{
+			{
+				std::lock_guard<std::mutex> generatingL(m_GeneratingChunksLock);
+				m_GeneratingChunks.erase(coord);
+			}
+
+			BuildChunkNotify(coord);
+			return;
+		}
+		else
+			BuildChunkNotify(coord);
+
+		SetChunkDirty(chunk, coord, true);
+	});
+}
+
+void CubeWorld::SetChunkDirty(Chunk* chunk, const glm::vec3& coord, bool isGenerating)
+{
+	if(!isGenerating)
+	{
+		std::lock_guard<std::mutex> generationL(m_GeneratingChunksLock);
+		if (!m_GeneratingChunks.insert({ coord, chunk }).second)
+			return;
+	}
+
+	{
+		std::lock_guard<std::mutex> dirtyLock(m_DirtyChunksLock);
+		m_DirtyChunks.push(chunk);
+	}
+}
+
+void CubeWorld::BuildChunkNotify(const glm::vec3& coord)
+{
+	const glm::vec3 max{ coord.x + CHUNK_SIZE, coord.y + CHUNK_SIZE, coord.z + CHUNK_SIZE };
+
+	glm::vec3 nCoord{};
+
+	Chunk* chunk;
+
+	for (nCoord.z = coord.z - CHUNK_SIZE; nCoord.z <= max.z; nCoord.z += CHUNK_SIZE)
+		for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
+			for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+			{
+				if (nCoord.y < 0 || nCoord.y >= CHUNK_MAX_HEIGHT || (coord.x == nCoord.x && coord.y == nCoord.y && coord.z == nCoord.z)
+					|| !GetChunk(nCoord, &chunk))
+					continue;
+
+				std::lock_guard<std::mutex> lock(chunk->m_Lock);
+
+				if (chunk->IsStage(Chunk::Stage::WaitingNeighbors))
+					SetChunkDirty(chunk, nCoord);
+			}
+}
+
+void CubeWorld::GenerateChunkMesh(Chunk* chunk)
+{
+	Mesh mesh;
+	chunk->GenerateMesh(this, mesh);
+
+	if (mesh.vertices.size() > 0)
+	{
+		std::lock_guard<std::mutex> lock(m_ChunksUploadLock);
+
+		m_ChunksUpload.push({ chunk, std::move(mesh) });
+	}
+	else
+	{
+		chunk->SetStage(Chunk::Stage::Uploaded);
+
+		std::lock_guard<std::mutex> generatingL(m_GeneratingChunksLock);
+		m_GeneratingChunks.erase(chunk->m_Coord);
+	}
+}
+
+void CubeWorld::UpdateChunkMesh(Chunk* chunk)
+{
+	const glm::vec3& coord = chunk->m_Coord;
+	if (!CheckNeighborsChunks(chunk, coord))
+	{
+		std::lock_guard<std::mutex> generatingL(m_GeneratingChunksLock);
+		m_GeneratingChunks.erase(coord);
+		return;
+	}
+
+	{
+		std::lock_guard<std::mutex> generatingL(m_GeneratingChunksLock);
+		if (!m_GeneratingChunks.contains(coord))
+		{
+			int a = 0;
+		}
+	}
+
+	m_ThreadPool->enqueue([&, chunk]() { GenerateChunkMesh(chunk); });
+}
+
+bool CubeWorld::CheckNeighborsChunks(Chunk* chunk, const glm::vec3& coord)
+{
+	const glm::vec3 max{ coord.x + CHUNK_SIZE, coord.y + CHUNK_SIZE, coord.z + CHUNK_SIZE };
+
+	glm::vec3 nCoord{};
+
+	bool allNeighbors = true, firstMiss = true;
+
+	for (nCoord.z = coord.z - CHUNK_SIZE; nCoord.z <= max.z; nCoord.z += CHUNK_SIZE)
+		for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
+			for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+			{
+				if (nCoord.y < 0 || nCoord.y >= CHUNK_MAX_HEIGHT || (coord.x == nCoord.x && coord.y == nCoord.y && coord.z == nCoord.z)
+					|| ExistChunk(nCoord))
+					continue;
+
+				if (firstMiss)
+				{
+					firstMiss = false;
+					chunk->SetStage(Chunk::Stage::WaitingNeighbors);
+				}
+
+				BuildChunk(nCoord, false);
+				allNeighbors = false;
+			}
+
+	return allNeighbors;
+}
+
+bool CubeWorld::GetChunkNeighbors(Chunk* chunk, const glm::vec3& coord, Chunk* chunks[26])
+{
+	const glm::vec3 max{ coord.x + CHUNK_SIZE, coord.y + CHUNK_SIZE, coord.z + CHUNK_SIZE };
+
+	glm::vec3 nCoord{};
+
+	bool allNeighbors = true, firstMiss = true;
+
+	int i = -1;
+	for (nCoord.z = coord.z - CHUNK_SIZE; nCoord.z <= max.z; nCoord.z += CHUNK_SIZE)
+		for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
+			for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+			{
+				++i;
+				if (nCoord.y < 0 || nCoord.y > CHUNK_MAX_HEIGHT || (coord.x == nCoord.x && coord.y == nCoord.y && coord.z == nCoord.z)
+					|| GetChunk(nCoord, &chunks[i]))
+					continue;
+
+				if (firstMiss)
+				{
+					firstMiss = false;
+					chunk->SetStage(Chunk::Stage::WaitingNeighbors);
+				}
+
+				BuildChunk(nCoord, false);
+				allNeighbors = false;
+			}
+
+	return allNeighbors;
+}
+
+bool CubeWorld::ExistChunk(const glm::vec3& coord)
+{
+	std::lock_guard<std::mutex> chunkL(m_ChunksLock);
+
+	return m_Chunks.find(coord) != m_Chunks.end();
+}
+
+bool CubeWorld::GetChunk(const glm::vec3& coord, Chunk** chunk)
+{
+	std::lock_guard<std::mutex> chunkL(m_ChunksLock);
+
+	auto chunkIT = m_Chunks.find(coord);
+	if (chunkIT == m_Chunks.end())
+		return false;
+
+	*chunk = chunkIT->second;
+	return true;
+}
+
+void CubeWorld::OnWindowResize()
 {
 	m_Width  = m_Specification->Width;
 	m_Height = m_Specification->Height;
 
 	m_WidthScaled  = (uint32_t)(m_Width  * m_Specification->ScreenScaleFactor);
 	m_HeightScaled = (uint32_t)(m_Height * m_Specification->ScreenScaleFactor);
+
+	m_Camera->WindowResize(m_WidthScaled, m_HeightScaled);
+	m_Camera->RecalculateView();
+}
+
+std::string CubeWorld::BytesToText(double bytes)
+{
+	if (bytes < 1000) return FormatFloat(bytes, 2) + "B";
+	bytes *= 0.001;
+	if (bytes < 1000) return FormatFloat(bytes, 2) + "kB";
+	bytes *= 0.001;
+	if (bytes < 1000) return FormatFloat(bytes, 2) + "MB";
+	bytes *= 0.001;
+	if (bytes < 1000) return FormatFloat(bytes, 2) + "GB";
+	return std::string();
+}
+
+std::string CubeWorld::FormatFloat(double n, int digit)
+{
+	std::string s = std::to_string(n);
+	return s.substr(0, min(s.find(".") + digit, s.size()));
 }

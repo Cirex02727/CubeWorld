@@ -362,4 +362,3 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /CubeWorld/res/shaders/customeInstance.shader
-/CubeWorld/res/shaders/interact.shader

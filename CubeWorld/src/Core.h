@@ -21,7 +21,6 @@
 
 #define PROFILE 1
 
-
 inline void GLClearError()
 {
     while (glGetError() != GL_NO_ERROR);

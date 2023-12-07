@@ -52,7 +52,7 @@ bool Camera::OnUpdate(float ts)
 	return moved;
 }
 
-void Camera::OnResize(uint32_t width, uint32_t height)
+void Camera::WindowResize(uint32_t width, uint32_t height)
 {
 	if (width == m_ViewportWidth && height == m_ViewportHeight)
 		return;
@@ -62,6 +62,8 @@ void Camera::OnResize(uint32_t width, uint32_t height)
 
 	m_ProjectionOrtho = glm::ortho(0.0f, (float)m_ViewportWidth, 0.0f, (float)m_ViewportHeight, -1.0f, 1.0f);
 
+	std::cout << m_ViewportWidth << " " << m_ViewportHeight << std::endl;
+
 	RecalculateProjection();
 }
 
@@ -70,7 +72,7 @@ float Camera::GetRotationSpeed()
 	return 0.001f;
 }
 
-bool Camera::Move(glm::vec3* movement)
+bool Camera::Move(glm::vec3* movement) const
 {
 	bool moved = false;
 

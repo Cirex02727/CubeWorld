@@ -26,7 +26,7 @@ struct WindowSpecification;
 
 struct WorldSettings
 {
-	int MaxRenderDistance = 20;
+	int MaxRenderDistance = 15;
 	int RenderDistance = min(5, MaxRenderDistance);
 
 	int RenderDistanceUnload = RenderDistance + 3;

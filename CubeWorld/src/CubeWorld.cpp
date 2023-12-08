@@ -7,86 +7,8 @@
 
 #include "Application.h"
 
-glm::vec3& border_vec3(glm::vec3& v, int d)
-{
-	switch (d)
-	{
-	case 0: v.x = CHUNK_SIZE - 1; break;
-	case 1: v.y = CHUNK_SIZE - 1; break;
-	case 2: v.z = CHUNK_SIZE - 1; break;
-	}
-	return v;
-}
-
-inline glm::vec3& border_vec3_1(glm::vec3& v, int d)
-{
-	switch (d)
-	{
-	case 0: v.x = CHUNK_SIZE - 1; break;
-	case 1: v.y = CHUNK_SIZE - 1; break;
-	case 2: v.z = CHUNK_SIZE - 1; break;
-	}
-	return v;
-}
-
-int neighbor_index(int d, bool backface)
-{
-	switch (d)
-	{
-	case 0:  return backface ? 0 : 1;
-	case 1:  return backface ? 2 : 3;
-	case 2:  return backface ? 4 : 5;
-	default: return -1;
-	}
-}
-
-inline int neighbor_index_1(int d, bool backface)
-{
-	switch (d)
-	{
-	case 0:  return backface ? 0 : 1;
-	case 1:  return backface ? 2 : 3;
-	case 2:  return backface ? 4 : 5;
-	default: return -1;
-	}
-}
-
 void CubeWorld::Init()
 {
-	bool backface = true;
-	int d = 1;
-
-	glm::vec3 v{};
-
-	uint32_t neighboars[26]{};
-
-	int count = 1'000;
-
-	Benchmark::Bench(count, [&]()
-	{
-		uint32_t chunk = neighboars[neighbor_index(d, backface)];
-		border_vec3(v, d);
-	});
-
-	Benchmark::Bench(count, [&]()
-	{
-		uint32_t chunk = neighboars[neighbor_index_1(d, backface)];
-		border_vec3(v, d);
-	});
-
-	Benchmark::Bench(count, [&]()
-	{
-		uint32_t chunk = neighboars[neighbor_index(d, backface)];
-		border_vec3_1(v, d);
-	});
-
-	Benchmark::Bench(count, [&]()
-	{
-		uint32_t chunk = neighboars[neighbor_index_1(d, backface)];
-		border_vec3_1(v, d);
-	});
-
-
 	SettupOpenGLSettings();
 
 	InitFramebuffer();
@@ -98,7 +20,7 @@ void CubeWorld::Init()
 	m_Noise = std::make_unique<SimplexNoise>(m_GenerationSettings.Frequency, m_GenerationSettings.Amplitude, m_GenerationSettings.Lacunarity, m_GenerationSettings.Persistence);
 
 	m_Camera = std::make_unique<Camera>(60.0f, 0.05f, 3000.0f);
-	m_Camera->SetPosition({ -35.6f, 150.0f, 29.3f });
+	m_Camera->SetPosition({ 0.0f, CHUNK_MAX_MOUNTAIN, 0.0f });
 	m_Camera->SetDirection({ 0.6f, -0.4f, 0.7f });
 	m_Camera->WindowResize(m_WidthScaled, m_HeightScaled);
 	m_Camera->RecalculateView();
@@ -352,6 +274,8 @@ void CubeWorld::Update(float timestep)
 		{
 			m_Settings.RenderDistance += glm::sign(maxRenderDist - renderDist);
 
+			renderDist = m_Settings.RenderDistance;
+
 			int i = 0;
 			m_UpdateCoord.resize((size_t)(renderDist * 2 + 1) * (size_t)(renderDist * 2 + 1) * CHUNK_Y_COUNT);
 			for (int z = -renderDist; z <= renderDist; z++)
@@ -584,8 +508,8 @@ void CubeWorld::BuildChunkNotify(const glm::vec3& coord)
 	Chunk* chunk;
 
 	for (nCoord.z = coord.z - CHUNK_SIZE; nCoord.z <= max.z; nCoord.z += CHUNK_SIZE)
-		for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
-			for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+		for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+			for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
 			{
 				if (nCoord.y < 0 || nCoord.y >= CHUNK_MAX_HEIGHT || (coord.x == nCoord.x && coord.y == nCoord.y && coord.z == nCoord.z)
 					|| !GetChunk(nCoord, &chunk))
@@ -648,10 +572,10 @@ bool CubeWorld::CheckNeighborsChunks(Chunk* chunk, const glm::vec3& coord)
 	bool allNeighbors = true, firstMiss = true;
 
 	for (nCoord.z = coord.z - CHUNK_SIZE; nCoord.z <= max.z; nCoord.z += CHUNK_SIZE)
-		for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
-			for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+		for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+			for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
 			{
-				if (nCoord.y < 0 || nCoord.y >= CHUNK_MAX_HEIGHT || (coord.x == nCoord.x && coord.y == nCoord.y && coord.z == nCoord.z)
+				if (nCoord.y < 0 || nCoord.y > CHUNK_MAX_HEIGHT || (coord.x == nCoord.x && coord.y == nCoord.y && coord.z == nCoord.z)
 					|| ExistChunk(nCoord))
 					continue;
 
@@ -678,8 +602,8 @@ bool CubeWorld::GetChunkNeighbors(Chunk* chunk, const glm::vec3& coord, Chunk* c
 
 	int i = -1;
 	for (nCoord.z = coord.z - CHUNK_SIZE; nCoord.z <= max.z; nCoord.z += CHUNK_SIZE)
-		for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
-			for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+		for (nCoord.y = coord.y - CHUNK_SIZE; nCoord.y <= max.y; nCoord.y += CHUNK_SIZE)
+			for (nCoord.x = coord.x - CHUNK_SIZE; nCoord.x <= max.x; nCoord.x += CHUNK_SIZE)
 			{
 				++i;
 				if (nCoord.y < 0 || nCoord.y > CHUNK_MAX_HEIGHT || (coord.x == nCoord.x && coord.y == nCoord.y && coord.z == nCoord.z)

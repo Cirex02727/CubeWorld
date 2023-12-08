@@ -62,8 +62,6 @@ void Camera::WindowResize(uint32_t width, uint32_t height)
 
 	m_ProjectionOrtho = glm::ortho(0.0f, (float)m_ViewportWidth, 0.0f, (float)m_ViewportHeight, -1.0f, 1.0f);
 
-	std::cout << m_ViewportWidth << " " << m_ViewportHeight << std::endl;
-
 	RecalculateProjection();
 }
 

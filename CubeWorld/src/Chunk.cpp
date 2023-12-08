@@ -16,8 +16,6 @@ Chunk::~Chunk()
 
 void Chunk::Fill(SimplexNoise* noise)
 {
-    PROFILE_FUNCTION();
-
     m_Stage = Stage::Filling;
 
     m_Data = new uint32_t[CHUNK_SIZEQ]{};
@@ -31,7 +29,7 @@ void Chunk::Fill(SimplexNoise* noise)
 
     for (uint16_t z = 0; z < CHUNK_SIZE; ++z)
         for (uint16_t x = 0; x < CHUNK_SIZE; ++x)
-            data[x + z * CHUNK_SIZE] = (uint16_t)((noise->fractal(5, (x + m_Coord.x) * scale, (z + m_Coord.z) * scale) + 1) * 0.5f * 170.66666f);
+            data[x + z * CHUNK_SIZE] = (uint16_t)((noise->fractal(5, (x + m_Coord.x) * scale, (z + m_Coord.z) * scale) + 1) * 0.5f * CHUNK_MAX_MOUNTAIN);
 
     srand(unsigned int(time(NULL)));
 
@@ -57,8 +55,6 @@ void Chunk::Fill(SimplexNoise* noise)
 
 void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
 {
-    PROFILE_FUNCTION();
-
     m_Stage = Stage::Building;
 
     // ZXY
@@ -79,11 +75,12 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
     int q []{ 0, 0, 0 };
     int du[]{ 0, 0, 0 };
     int dv[]{ 0, 0, 0 };
+    int dt[]{ 0, 0, 0 };
 
     uint32_t voxelFace, voxelFace1;
 
-    uint32_t mask[CHUNK_SIZES];
-    memset(mask, 0, CHUNK_SIZES * sizeof(uint32_t));
+    FaceMask mask[CHUNK_SIZES];
+    memset(mask, 0, CHUNK_SIZES * sizeof(FaceMask));
 
     uint32_t indices = 0;
 
@@ -113,25 +110,48 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
             {
                 n = 0;
 
+                du[0] = 0;
+                du[1] = 0;
+                du[2] = 0;
+                du[u] = 1;
+
+                dv[0] = 0;
+                dv[1] = 0;
+                dv[2] = 0;
+                dv[v] = 1;
+
                 for (x[v] = 0; x[v] < CHUNK_SIZE; ++x[v])
                     for (x[u] = 0; x[u] < CHUNK_SIZE; ++x[u])
                     {
-                        voxelFace  = (x[d] >= 0)             ? m_Data[ x[0]         +  x[1]         * CHUNK_SIZE +  x[2]         * CHUNK_SIZES]
+                        voxelFace  = (x[d] >= 0)             ? m_Data[x[0] + x[1] * CHUNK_SIZE + x[2] * CHUNK_SIZES]
                             : GetNeighborBlock(chunks, x, d, false, CHUNK_SIZE - 1);
                         voxelFace1 = (x[d] < CHUNK_SIZE - 1) ? m_Data[(x[0] + q[0]) + (x[1] + q[1]) * CHUNK_SIZE + (x[2] + q[2]) * CHUNK_SIZES]
-                            : GetNeighborBlock(chunks, x, d,  true,              0);
+                            : GetNeighborBlock(chunks, x, d, true,  0);
 
                         if (voxelFace == voxelFace1)
                         {
-                            mask[n++] = 0;
+                            mask[n].ao.data = 0x03030303;
+                            mask[n++].id    = 0;
                             continue;
                         }
 
-                        // TODO:
-                        // char ao  = FindAO(chunks, x, d, backFace);
-                        // char ao1 = FindAO(chunks, x, d, backFace);
+                        if (backFace)
+                        {
+                            dt[0] = x[0];
+                            dt[1] = x[1];
+                            dt[2] = x[2];
+                        }
+                        else
+                        {
+                            dt[0] = x[0] + q[0];
+                            dt[1] = x[1] + q[1];
+                            dt[2] = x[2] + q[2];
+                        }
 
-                        mask[n++] = backFace ? voxelFace1 : voxelFace;
+                        CalculateAO(chunks, mask[n].ao, dt[0], dt[1], dt[2], du, dv);
+
+                        // mask[n].ao.data = 0x03030303;
+                        mask[n++].id = backFace ? voxelFace1 : voxelFace;
                     }
 
                 ++x[d];
@@ -140,14 +160,14 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
                 for (j = 0; j < CHUNK_SIZE; ++j)
                     for (i = 0; i < CHUNK_SIZE;)
                     {
-                        if (!mask[n])
+                        if (!mask[n].id)
                         {
                             ++i;
                             ++n;
                             continue;
                         }
 
-                        for (w = 1; i + w < CHUNK_SIZE && mask[n + w] && mask[n + w] == mask[n]; ++w);
+                        for (w = 1; i + w < CHUNK_SIZE && mask[n + w].id && mask[n + w] == mask[n]; ++w);
 
                         bool done = false;
 
@@ -156,7 +176,7 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
                             for (k = 0; k < w; ++k)
                             {
                                 int indx = n + k + h * CHUNK_SIZE;
-                                if (!mask[indx] || mask[indx] != mask[n]) { done = true; break; }
+                                if (!mask[indx].id || mask[indx] != mask[n]) { done = true; break; }
                             }
 
                             if (done) break;
@@ -168,43 +188,65 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
                             x[u] = i;
                             x[v] = j;
 
-                            du[0] = 0;
-                            du[1] = 0;
-                            du[2] = 0;
                             du[u] = w;
-
-                            dv[0] = 0;
-                            dv[1] = 0;
-                            dv[2] = 0;
                             dv[v] = h;
 
-                            mesh.vertices.push_back(VBO(x[0],                 x[1],                 x[2],                 w, h, 0, 0));
+                            const AO& ao = mask[n].ao;
+
+                            int mW = w - 1, mH = h - 1;
+
+                            mesh.vertices.push_back(VBO(x[0],                 x[1],                 x[2],                 mW, mH, 0, ao.vertices.v0));
                             mesh.vertices.push_back(VBO1(0, side));
-                            mesh.vertices.push_back(VBO(x[0] + dv[0],         x[1] + dv[1],         x[2] + dv[2],         w, h, 1, 0));
+                            mesh.vertices.push_back(VBO(x[0] + dv[0],         x[1] + dv[1],         x[2] + dv[2],         mW, mH, 1, ao.vertices.v1));
                             mesh.vertices.push_back(VBO1(0, side));
-                            mesh.vertices.push_back(VBO(x[0] + du[0],         x[1] + du[1],         x[2] + du[2],         w, h, 2, 0));
+                            mesh.vertices.push_back(VBO(x[0] + du[0],         x[1] + du[1],         x[2] + du[2],         mW, mH, 2, ao.vertices.v2));
                             mesh.vertices.push_back(VBO1(0, side));
-                            mesh.vertices.push_back(VBO(x[0] + du[0] + dv[0], x[1] + du[1] + dv[1], x[2] + du[2] + dv[2], w, h, 3, 0));
+                            mesh.vertices.push_back(VBO(x[0] + du[0] + dv[0], x[1] + du[1] + dv[1], x[2] + du[2] + dv[2], mW, mH, 3, ao.vertices.v3));
                             mesh.vertices.push_back(VBO1(0, side));
 
+                            bool flip = ao.vertices.v0 + ao.vertices.v3 > ao.vertices.v1 + ao.vertices.v2;
 
                             if (backFace)
                             {
-                                mesh.indices.push_back(indices + 2);
-                                mesh.indices.push_back(indices);
-                                mesh.indices.push_back(indices + 1);
-                                mesh.indices.push_back(indices + 1);
-                                mesh.indices.push_back(indices + 3);
-                                mesh.indices.push_back(indices + 2);
+                                if (flip)
+                                {
+                                    mesh.indices.push_back(indices + 3);
+                                    mesh.indices.push_back(indices + 2);
+                                    mesh.indices.push_back(indices);
+                                    mesh.indices.push_back(indices);
+                                    mesh.indices.push_back(indices + 1);
+                                    mesh.indices.push_back(indices + 3);
+                                }
+                                else
+                                {
+                                    mesh.indices.push_back(indices + 2);
+                                    mesh.indices.push_back(indices);
+                                    mesh.indices.push_back(indices + 1);
+                                    mesh.indices.push_back(indices + 1);
+                                    mesh.indices.push_back(indices + 3);
+                                    mesh.indices.push_back(indices + 2);
+                                }
                             }
                             else
                             {
-                                mesh.indices.push_back(indices + 2);
-                                mesh.indices.push_back(indices + 3);
-                                mesh.indices.push_back(indices + 1);
-                                mesh.indices.push_back(indices + 1);
-                                mesh.indices.push_back(indices);
-                                mesh.indices.push_back(indices + 2);
+                                if (flip) // flip triangles
+                                {
+                                    mesh.indices.push_back(indices);
+                                    mesh.indices.push_back(indices + 2);
+                                    mesh.indices.push_back(indices + 3);
+                                    mesh.indices.push_back(indices + 3);
+                                    mesh.indices.push_back(indices + 1);
+                                    mesh.indices.push_back(indices);
+                                }
+                                else
+                                {
+                                    mesh.indices.push_back(indices + 2);
+                                    mesh.indices.push_back(indices + 3);
+                                    mesh.indices.push_back(indices + 1);
+                                    mesh.indices.push_back(indices + 1);
+                                    mesh.indices.push_back(indices);
+                                    mesh.indices.push_back(indices + 2);
+                                }
                             }
 
                             indices += 4;
@@ -221,7 +263,7 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
                         }
                         for (l = 0; l < h; ++l)
                             for (k = 0; k < w; ++k)
-                                mask[n + k + l * CHUNK_SIZE] = 0;
+                                mask[n + k + l * CHUNK_SIZE].reset();
                         
                         i += w;
                         n += w;
@@ -265,7 +307,7 @@ void Chunk::Render(Shader* shader) const
 uint32_t Chunk::GetNeighborBlock(Chunk* chunks[26], int x[3], int d, bool isNeighF, int v) const
 {
     int neighborIndex = 0, x_ = x[0], y_ = x[1], z_ = x[2];
-    if (d == 0) { neighborIndex = isNeighF ? 16 : 10; x_ = v; }
+    if (d == 0) { neighborIndex = isNeighF ? 14 : 12; x_ = v; }
     else if (d == 1)
     {
         if (isNeighF)
@@ -273,18 +315,64 @@ uint32_t Chunk::GetNeighborBlock(Chunk* chunks[26], int x[3], int d, bool isNeig
             if (m_Coord.y == CHUNK_MAX_HEIGHT - CHUNK_SIZE)
                 return 0;
 
-            neighborIndex = 14;
+            neighborIndex = 16;
         }
         else
         {
             if (m_Coord.y == 0)
                 return 0;
 
-            neighborIndex = 12;
+            neighborIndex = 10;
         }
         y_ = v;
     }
     else { neighborIndex = isNeighF ? 22 : 4; z_ = v; }
 
-    return chunks[neighborIndex]->GetBlock(x_ + y_ * CHUNK_SIZE + z_ * CHUNK_SIZES);
+    return chunks[neighborIndex]->GetBlock(x_, y_, z_);
+}
+
+void Chunk::CalculateAO(Chunk* chunks[26], AO& ao, int x, int y, int z, int du[3], int dv[3]) const
+{
+    // V0 (0, 0)
+    int sMV = GetAONeighborBlock(chunks, x - dv[0], y - dv[1], z - dv[2]);
+    int sPV = GetAONeighborBlock(chunks, x + dv[0], y + dv[1], z + dv[2]);
+    int sMU = GetAONeighborBlock(chunks, x - du[0], y - du[1], z - du[2]);
+    int sPU = GetAONeighborBlock(chunks, x + du[0], y + du[1], z + du[2]);
+
+    ao.vertices.v0 = (sMV && sMU) ? 0 : 3 - (sMV + sMU + GetAONeighborBlock(chunks, x - dv[0] - du[0], y - dv[1] - du[1], z - dv[2] - du[2]));
+    ao.vertices.v1 = (sPV && sMU) ? 0 : 3 - (sPV + sMU + GetAONeighborBlock(chunks, x + dv[0] - du[0], y + dv[1] - du[1], z + dv[2] - du[2]));
+    ao.vertices.v2 = (sMV && sPU) ? 0 : 3 - (sMV + sPU + GetAONeighborBlock(chunks, x - dv[0] + du[0], y - dv[1] + du[1], z - dv[2] + du[2]));
+    ao.vertices.v3 = (sPV && sPU) ? 0 : 3 - (sPV + sPU + GetAONeighborBlock(chunks, x + dv[0] + du[0], y + dv[1] + du[1], z + dv[2] + du[2]));
+}
+
+int Chunk::GetAONeighborBlock(Chunk* chunks[26], int x, int y, int z) const
+{
+    int neighborIndx = 0;
+    bool upBorder = false, downBorder = false;
+    if (CoordinateInBound(&x, &y, &z, &neighborIndx, &upBorder, &downBorder))
+        return m_Data[x + y * CHUNK_SIZE + z * CHUNK_SIZES];
+    else if ((upBorder && m_Coord.y == CHUNK_MAX_HEIGHT - CHUNK_SIZE) ||
+             (downBorder && m_Coord.y == 0))
+        return 0;
+    else
+        return chunks[neighborIndx]->GetBlock(x, y, z);
+}
+
+bool Chunk::CoordinateInBound(int* x, int* y, int* z, int* neighborIndx, bool* upBorder, bool* downBorder) const
+{
+    int indx;
+
+    if      (*x < 0)           { indx = 0; *x = CHUNK_SIZE - 1; }
+    else if (*x >= CHUNK_SIZE) { indx = 2; *x = 0;              }
+    else                         indx = 1;
+
+    if      (*y < 0)           {            *y = CHUNK_SIZE - 1; *downBorder = true; }
+    else if (*y >= CHUNK_SIZE) { indx += 6; *y = 0;              *upBorder   = true; } // 2 * 3
+    else                         indx += 3;  // 1 * 3
+
+    if      (*z < 0)           {             *z = CHUNK_SIZE - 1; }
+    else if (*z >= CHUNK_SIZE) { indx += 18; *z = 0;              } // 2 * 9
+    else                         indx += 9;  // 1 * 9
+
+    return (*neighborIndx = indx) == 13; // 1 + 1 * 3 + 1 * 9
 }

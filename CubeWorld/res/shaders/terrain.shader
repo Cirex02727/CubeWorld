@@ -23,7 +23,7 @@ const vec2 uvs[4] = vec2[]
 
 const float aos[4] = float[]
 (
-    1.0, 0.7, 0.45, 0.15
+    0.15, 0.45, 0.7, 1.0
 );
 
 const vec3 normals[6] = vec3[]
@@ -49,12 +49,12 @@ void main()
     float y = float((data >> 6 ) & 0x3Fu);
     float z = float((data >> 12) & 0x3Fu);
 
-    uint w = (data >> 18) & 0x1F;
-    uint h = (data >> 23) & 0x1F;
+    uint w = (data >> 18) & 0x1F + 1u;
+    uint h = (data >> 23) & 0x1F + 1u;
 
     vec2 uv = uvs[(data >> 28) & 0x3u];
 
-    float ao = aos[(data >> 30) & 0x3u];
+    float ao = aos[data >> 30];
 
     uint id = data1 & 0x7FFu;
 
@@ -75,7 +75,7 @@ void main()
     }
     else
     {
-        v_Color = vec3(0.75, 0.35, 0.15);
+        v_Color = vec3(0.75, 0.35, 0.15) * ao;
         v_Debug = 0;
     }
 
@@ -114,7 +114,7 @@ void main()
     float diff = max(dot(v_Normal, lightDir), 0.0);
     vec3 diffuse = diff * lightColor;
 
-    if(v_Debug == 1)
+    if(v_Debug == 1 || true)
         color = vec4(v_Color, 1.0);
     else
         color = vec4((ambient + diffuse) * v_Color, 1.0);

@@ -33,10 +33,10 @@ bool Camera::OnUpdate(float ts)
 	glm::vec3 movement{};
 	bool moved = Move(&movement);
 
-	movement *= 75.0f;
+	movement *= 10.0f;
 
 	if (Input::IsKey(KeyCode::LeftControl))
-		movement *= 10;
+		movement *= 50;
 
 	// m_Acceleration = moved ? movement : glm::vec3{};
 	// m_Velocity += m_Acceleration * ts;

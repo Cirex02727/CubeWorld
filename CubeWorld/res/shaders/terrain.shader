@@ -6,11 +6,21 @@
 layout(location = 0) in uint data;
 layout(location = 1) in uint data1;
 
+struct Block
+{
+    uvec2 offset; // 1 uint offset + 1 padding
+    vec2 uv;
+};
+
+layout(std140, binding = 0) uniform BlockUniform
+{
+    Block data[MAX_BLOCKS_IDS];
+} blocks;
+
 uniform mat4 u_VP;
 
 uniform vec3 u_ChunkOff;
 
-uniform bool u_DebugNormal;
 uniform bool u_DebugUV;
 
 const vec2 uvs[4] = vec2[]
@@ -36,11 +46,12 @@ const vec3 normals[6] = vec3[]
     vec3(-1.0,  0.0,  0.0)  // 5
 );
 
-out vec3 v_Color;
+out vec2 v_UV;
+out vec2 v_UVOff;
+out float v_AO;
+
 out vec3 v_Normal;
 out vec3 v_FragPos;
-
-flat out int v_Debug;
 
 void main()
 {
@@ -49,38 +60,27 @@ void main()
     float y = float((data >> 6 ) & 0x3Fu);
     float z = float((data >> 12) & 0x3Fu);
 
-    uint w = (data >> 18) & 0x1F + 1u;
-    uint h = (data >> 23) & 0x1F + 1u;
+    float w = float((data >> 18) & 0x1F) + 1.0;
+    float h = float((data >> 23) & 0x1F) + 1.0;
 
-    vec2 uv = uvs[(data >> 28) & 0x3u];
+    vec2 uv = uvs[(data >> 28) & 0x3u] * vec2(w, h);
 
     float ao = aos[data >> 30];
 
     uint id = data1 & 0x7FFu;
 
     vec3 norm = normals[(data1 >> 12) & 0x7u];
-    
+
     vec3 pos = vec3(x, y, z) + u_ChunkOff;
 
     // Calculate Fragment Color
-    if(u_DebugNormal)
-    {
-        v_Color = vec3((norm + 1) * 0.5);
-        v_Debug = 1;
-    }
-    else if(u_DebugUV)
-    {
-        v_Color = vec3(uv, 0.0);
-        v_Debug = 1;
-    }
-    else
-    {
-        v_Color = vec3(0.75, 0.35, 0.15) * ao;
-        v_Debug = 0;
-    }
+    v_UV = uv;
+    v_UVOff = blocks.data[blocks.data[id].offset.x].uv;
+    v_AO = ao;
 
     v_Normal = norm;
     v_FragPos = pos;
+
 
     gl_Position = u_VP * vec4(pos, 1.0);
 }
@@ -95,14 +95,31 @@ uniform sampler2D u_Texture;
 
 uniform vec3 u_CamPos;
 
-in vec3 v_Color;
+uniform bool u_DebugNormal;
+uniform bool u_DebugUV;
+
+uniform vec2 u_Step;
+
+in vec2 v_UV;
+in vec2 v_UVOff;
+in float v_AO;
+
 in vec3 v_Normal;
 in vec3 v_FragPos;
 
-flat in int v_Debug;
-
 void main()
 {
+    if(u_DebugNormal)
+    {
+        color = vec4((v_Normal + 1.0) * 0.5, 1.0);
+        return;
+    }
+    if(u_DebugUV)
+    {
+        color = vec4(v_UV, 0.0, 1.0);
+        return;
+    }
+
     vec3 lightColor = vec3(1.0, 1.0, 1.0);
 
     float ambientStrength = 0.1;
@@ -111,11 +128,14 @@ void main()
 
     vec3 lightDir = normalize(u_CamPos - v_FragPos);
 
-    float diff = max(dot(v_Normal, lightDir), 0.0);
+    float diff = max(dot(v_Normal, lightDir), 0.75);
     vec3 diffuse = diff * lightColor;
 
-    if(v_Debug == 1 || true)
-        color = vec4(v_Color, 1.0);
-    else
-        color = vec4((ambient + diffuse) * v_Color, 1.0);
+
+    color = texture(u_Texture, v_UVOff + fract(v_UV) * u_Step);
+    if(color.a == 0)
+        discard;
+
+    if(color.a == 1)
+        color *= vec4((ambient + diffuse) * v_AO, 1.0);
 }

@@ -26,7 +26,7 @@ struct WindowSpecification;
 
 struct WorldSettings
 {
-	int MaxRenderDistance = 15;
+	int MaxRenderDistance = 10;
 	int RenderDistance = min(5, MaxRenderDistance);
 
 	int RenderDistanceUnload = RenderDistance + 3;
@@ -119,6 +119,8 @@ private:
 	std::unique_ptr<Shader> m_Shader, m_CrosshairShader, m_InteractShader;
 
 	uint32_t m_CrosshairVAO = 0, m_CrosshairVBO = 0, m_InteractVAO = 0, m_InteractVBO = 0, m_InteractIBO = 0;
+
+	glm::vec2 m_AtlasStep{ 0.0f, 0.0f };
 
 	bool m_DebugNormal = false, m_DebugUV = false;
 

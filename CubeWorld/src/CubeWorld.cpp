@@ -5,6 +5,8 @@
 #include "utils/Timer.h"
 #include "utils/Benchmark.h"
 
+#include "data/BlocksManager.h"
+
 #include "Application.h"
 
 void CubeWorld::Init()
@@ -18,6 +20,8 @@ void CubeWorld::Init()
 	m_ThreadPool = std::make_unique<ThreadPool>(std::thread::hardware_concurrency() - 1);
 	
 	m_Noise = std::make_unique<SimplexNoise>(m_GenerationSettings.Frequency, m_GenerationSettings.Amplitude, m_GenerationSettings.Lacunarity, m_GenerationSettings.Persistence);
+
+	BlocksManager::Init();
 
 	m_Camera = std::make_unique<Camera>(60.0f, 0.05f, 3000.0f);
 	m_Camera->SetPosition({ 0.0f, CHUNK_MAX_MOUNTAIN, 0.0f });
@@ -42,14 +46,75 @@ void CubeWorld::Init()
 			for (int x = -renderDist; x <= renderDist; x++)
 				m_UpdateCoord[i++] = { x, y, z };
 
+
+	m_CrosshairTexture = std::make_unique<Texture>("res/textures/crosshair.png", GL_NEAREST, GL_NEAREST);
+
+	m_CrosshairShader = std::make_unique<Shader>("res/shaders/crosshair.shader");
+	m_CrosshairShader->Bind();
+	m_CrosshairShader->SetUniform1i("u_Texture", 0);
+
+	// Crosshair
+	{
+		const float crosshairSize = 85.0f, halfCrosshairSize = crosshairSize / 2;
+		const glm::vec2 center = { m_WidthScaled / 2, m_HeightScaled / 2 };
+		float positions[] = {
+			center.x + halfCrosshairSize, center.y - halfCrosshairSize, 1.0f, 0.0f,
+			center.x + halfCrosshairSize, center.y + halfCrosshairSize, 1.0f, 1.0f,
+			center.x - halfCrosshairSize, center.y - halfCrosshairSize, 0.0f, 0.0f,
+			center.x - halfCrosshairSize, center.y + halfCrosshairSize, 0.0f, 1.0f
+		};
+
+		GLCall(glGenVertexArrays(1, &m_CrosshairVAO));
+		GLCall(glBindVertexArray(m_CrosshairVAO));
+
+		GLCall(GLCall(glGenBuffers(1, &m_CrosshairVBO)));
+		GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_CrosshairVBO));
+		GLCall(glBufferData(GL_ARRAY_BUFFER, 4 * 4 * sizeof(float), positions, GL_STATIC_DRAW));
+
+		GLCall(glEnableVertexAttribArray(0));
+		GLCall(glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0));
+		GLCall(glEnableVertexAttribArray(1));
+		GLCall(glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float))));
+	}
+
+
+	// Blocks Manager
+	{
+		float stepX = 1.0f / (m_Texture->GetWidth() / 16.0f);
+		float stepY = 1.0f / (m_Texture->GetHeight() / 16.0f);
+		m_AtlasStep = glm::vec2{ stepX, stepY };
+
+		m_Shader->Bind();
+		m_Shader->SetUniform2f("u_Step", m_AtlasStep.x, m_AtlasStep.y);
+
+		Block* block;
+		block = new Block("Air",     { { 10 * stepX, 14 * stepY } });
+		block->m_IsTransparent = true;
+
+		block = new Block("Dirt",    { {  2 * stepX, 15 * stepY } });
+		block = new Block("Grass",   { {  0 * stepX, 15 * stepY } });
+		block = new Block("Stone",   { {  1 * stepX, 15 * stepY } });
+
+		block = new Block("Water",   { { 13 * stepX,  3 * stepY } });
+		block->m_IsTransparent = true;
+		block->m_IsTranslucent = true;
+		block->m_IsLiquid      = true;
+
+		block = new Block("Glass",   { {  1 * stepX, 12 * stepY } });
+		block->m_IsTransparent = true;
+
+		block = new Block("Sand",    { {  2 * stepX, 14 * stepY } });
+		block = new Block("Snow",    { {  2 * stepX, 11 * stepY } });
+
+		block = new Block("Bedrock", { {  1 * stepX, 14 * stepY } });
+
+		BlocksManager::UploadBlocks();
+	}
+
 	// To Implement
-	// Neighbors/Update Coords
-	// BlocksManager (UploadBlocks)
 	// StructureManager (Load Structures)
-	// Frustum
 	// DataCompressManager
 	// Custome Blocks (ShaderCustome)
-	// BuildChunks
 	// Load Mods
 }
 
@@ -132,8 +197,6 @@ void CubeWorld::InitFramebuffer()
 	GLCall(glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (GLvoid*)0));
 	GLCall(glEnableVertexAttribArray(1));
 	GLCall(glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (GLvoid*)(2 * sizeof(float))));
-
-	GLCall(glBindFramebuffer(GL_FRAMEBUFFER, 0));
 }
 
 void CubeWorld::InitCrosshair()
@@ -242,12 +305,10 @@ void CubeWorld::InitInteract()
 
 CubeWorld::~CubeWorld()
 {
+	BlocksManager::Dispose();
+
 	GLCall(glDeleteVertexArrays(1, &m_CrosshairVAO));
 	GLCall(glDeleteBuffers(1, &m_CrosshairVBO));
-
-	GLCall(glDeleteVertexArrays(1, &m_InteractVAO));
-	GLCall(glDeleteBuffers(1, &m_InteractVBO));
-	GLCall(glDeleteBuffers(1, &m_InteractIBO));
 
 	GLCall(glDeleteVertexArrays(1, &m_FBOQuadVAO));
 	GLCall(glDeleteBuffers(1, &m_FBOQuadVBO));
@@ -307,7 +368,8 @@ void CubeWorld::Update(float timestep)
 		const glm::vec3& coord = chunk->m_Coord;
 		{
 			size_t vertices = mesh.vertices.size();
-			if (vertices <= 0)
+			size_t tvertices = mesh.tvertices.size();
+			if (vertices <= 0 && tvertices <= 0)
 			{
 				std::lock_guard<std::mutex> uploadL(m_ChunksUploadLock);
 
@@ -323,7 +385,7 @@ void CubeWorld::Update(float timestep)
 			if (!m_MeshedChunks.contains(coord))
 			{
 				m_MeshedChunks[coord] = chunk;
-				m_TotalBytes += vertices * sizeof(uint32_t);
+				m_TotalBytes += vertices * sizeof(uint32_t) + tvertices * sizeof(uint32_t);
 			}
 		}
 
@@ -366,6 +428,9 @@ void CubeWorld::Update(float timestep)
 
 void CubeWorld::Render()
 {
+	glBindFramebuffer(GL_FRAMEBUFFER, m_FBO);
+	glViewport(0, 0, m_WidthScaled, m_HeightScaled);
+
 	GLCall(glClearColor(0.0f, 0.0f, 0.0f, 1.0f));
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -384,21 +449,87 @@ void CubeWorld::Render()
 
 	m_Frustum->Update(m_Camera.get());
 
+	BlocksManager::Bind();
+
 	m_RenderedChunk = 0;
 
 	{
 		std::lock_guard<std::mutex> chunksL(m_MeshedChunksLock);
 
+		std::vector<std::tuple<glm::vec3, Chunk*>> inFrustum;
+		inFrustum.reserve(m_MeshedChunks.size());
+
 		Shader* shader = m_Shader.get();
-		for (const auto& [coord, chunk] : m_MeshedChunks)
+		for (auto& [coord, chunk] : m_MeshedChunks)
 		{
 			if (!m_Frustum->SphereIntersect(coord + HCHUNK_SIZE, SPHERE_CHUNK_RADIUS))
 				continue;
 
 			chunk->Render(shader);
+			inFrustum.push_back({ coord, chunk });
 			++m_RenderedChunk;
 		}
+
+		// Order Chunks based on distance from camera
+		std::sort(inFrustum.begin(), inFrustum.end(), [&camPos](const std::tuple<glm::vec3, Chunk*>& c1, const std::tuple<glm::vec3, Chunk*>& c2)
+		{
+			return glm::distance(std::get<0>(c1) + HCHUNK_SIZE, camPos) > glm::distance(std::get<0>(c2) + HCHUNK_SIZE, camPos);
+		});
+
+		// Render Transparence Faces
+		GLCall(glEnable(GL_BLEND));
+		GLCall(glDisable(GL_CULL_FACE));
+
+		GLCall(glDepthMask(GL_FALSE));
+
+		m_Shader->Bind();
+
+		for (const auto& [_, chunk] : inFrustum)
+		{
+			chunk->RenderT(shader);
+		}
+
+		GLCall(glDepthMask(GL_TRUE));
+
+		GLCall(glDisable(GL_BLEND));
 	}
+
+	// Render 2D Objects (UI)
+
+	{
+		// Render 2D Objects (UI)
+		m_CrosshairShader->Bind();
+		m_CrosshairShader->SetUniformMat4f("u_VP", m_Camera->GetProjectionOrtho());
+
+		m_CrosshairTexture->Bind();
+
+		glBindVertexArray(m_CrosshairVAO);
+
+		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	}
+
+	{
+		// Draw Framebuffer
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		GLCall(glClearColor(0.0f, 0.0f, 0.0f, 1.0f));
+		GLCall(glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT));
+		glViewport(0, 0, m_Width, m_Height);
+
+		m_FBOShader->Bind();
+		glBindVertexArray(m_FBOQuadVAO);
+
+		glDisable(GL_DEPTH_TEST);
+
+		GLCall(glActiveTexture(GL_TEXTURE0));
+		GLCall(glBindTexture(GL_TEXTURE_2D, m_FBOColor));
+		glGenerateMipmap(GL_TEXTURE_2D);
+
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+
+		glEnable(GL_DEPTH_TEST);
+	}
+
+	glEnable(GL_CULL_FACE);
 }
 
 void CubeWorld::ImGuiRender()
@@ -527,7 +658,7 @@ void CubeWorld::GenerateChunkMesh(Chunk* chunk)
 	Mesh mesh;
 	chunk->GenerateMesh(this, mesh);
 
-	if (mesh.vertices.size() > 0)
+	if (mesh.vertices.size() > 0 || mesh.tvertices.size() > 0)
 	{
 		std::lock_guard<std::mutex> lock(m_ChunksUploadLock);
 

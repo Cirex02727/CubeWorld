@@ -4,6 +4,8 @@
 
 #include "utils/SimplexNoise.h"
 
+#include "data/blocks/Block.h"
+
 #include <glm/glm.hpp>
 
 #include <cstdint>
@@ -18,7 +20,12 @@
 
 #define CHUNK_Y_COUNT 8
 #define CHUNK_MAX_HEIGHT CHUNK_SIZE * CHUNK_Y_COUNT
+
 #define CHUNK_MAX_MOUNTAIN CHUNK_MAX_HEIGHT * 4.0f / 5.0f
+
+#define CHUNK_WATER_HEIGHT 45
+#define CHUNK_STONE_HEIGHT 165
+#define CHUNK_SNOW_HEIGHT 175
 
 #define HCHUNK_SIZE CHUNK_SIZE * 0.5f
 
@@ -28,13 +35,13 @@
 // X 6 Bit - Y 6 Bit - Z 6 Bit | Width 5 Bit | Heigth 5 Bit | UV 2 Bit | AO 2 Bit
 #define VBO(x, y, z, w, h, uv, ao) (x) | ((y) << 6) | ((z) << 12) | ((w) << 18) | ((h) << 23) | ((uv) << 28) | ((ao) << 30)
 
-// ID 12 Bit | Norm 3 Bit | EMPTY 20 Bit
+// ID 12 Bit | Norm 3 Bit | Flip 1 Bit | EMPTY 19 Bit
 #define VBO1(id, norm) (id) | ((norm) << 12)
 
 struct Mesh
 {
-	std::vector<uint32_t> vertices;
-	std::vector<uint32_t> indices;
+	std::vector<uint32_t> vertices, tvertices;
+	std::vector<uint32_t> indices, tindices;
 };
 
 struct AO
@@ -52,19 +59,21 @@ struct AO
 
 struct FaceMask
 {
-	uint32_t id = 0;
+public:
+	ChunkBlock block;
 	AO ao;
 
-	void reset() { id = 0; ao.data = 0; }
+public:
+	void reset() { block.data = 0; ao.data = 0; }
 
 	bool operator==(const FaceMask& o)
 	{
-		return id == o.id && ao.data == o.ao.data;
+		return block == o.block && ao.data == o.ao.data;
 	}
 
 	bool operator!=(const FaceMask& o)
 	{
-		return id != o.id || ao.data != o.ao.data;
+		return block != o.block || ao.data != o.ao.data;
 	}
 };
 
@@ -77,7 +86,9 @@ class Chunk
 public:
 	enum Stage { Initialized, Filling, Filled, WaitingNeighbors, Building, Built, Uploaded };
 
-	uint32_t m_IndicesCount = 0;
+	// T for Translucent
+
+	uint32_t m_IndicesCount = 0, m_TIndicesCount = 0;
 
 	glm::vec3 m_Coord;
 
@@ -95,10 +106,11 @@ public:
 	
 	void UploadMesh(const Mesh& mesh);
 
-	void Render(Shader* shader) const;
+	void Render (Shader* shader) const;
+	void RenderT(Shader* shader) const;
 
-	inline uint32_t GetBlock(int x, int y, int z) const { return m_Data[x + y * CHUNK_SIZE + z * CHUNK_SIZES]; }
-	inline uint32_t GetBlock(int index)           const { return m_Data[index]; }
+	inline ChunkBlock GetBlock  (int index) const { return m_Data[index];         }
+	inline uint32_t   GetBlockID(int index) const { return m_Data[index].GetID(); }
 
 public:
 	inline Stage GetStage()                   const { return m_Stage; }
@@ -106,7 +118,7 @@ public:
 	inline bool  IsStage (const Stage& stage) const { return m_Stage == stage; }
 
 private:
-	uint32_t GetNeighborBlock(Chunk* chunks[26], int x[3], int d, bool isNeighF, int v) const;
+	ChunkBlock GetNeighborBlock(Chunk* chunks[26], int x[3], int d, bool isNeighF, int v) const;
 
 	void CalculateAO(Chunk* chunks[26], AO& ao, int x, int y, int z, int du[3], int dv[3]) const;
 
@@ -115,10 +127,10 @@ private:
 	bool CoordinateInBound(int* x, int* y, int* z, int* neighborIndx, bool* upBorder, bool* downBorder) const;
 
 private:
-	uint32_t* m_Data = nullptr;
+	ChunkBlock* m_Data = nullptr;
 
 	Stage m_Stage = Stage::Initialized;
 
-	uint32_t m_VAO = 0;
-	uint32_t m_VBIO[2]{ 0, 0 };
+	uint32_t m_VAO [2]{ 0, 0 };
+	uint32_t m_VBIO[4]{ 0, 0, 0, 0 };
 };

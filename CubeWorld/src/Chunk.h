@@ -4,12 +4,16 @@
 
 #include "utils/SimplexNoise.h"
 
+#include "data/BlocksManager.h"
 #include "data/blocks/Block.h"
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
 #include <glm/glm.hpp>
 
 #include <cstdint>
 #include <vector>
+#include <queue>
 #include <mutex>
 
 #define CHUNK_SIZE 32
@@ -37,6 +41,10 @@
 
 // ID 12 Bit | Norm 3 Bit | Flip 1 Bit | EMPTY 19 Bit
 #define VBO1(id, norm) (id) | ((norm) << 12)
+
+#define ID(x, y, z) (y) + (x) * CHUNK_SIZE + (z) * CHUNK_SIZES
+
+static glm::vec3 CHUNK_SIZE3{ CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE };
 
 struct Mesh
 {
@@ -109,10 +117,36 @@ public:
 	void Render (Shader* shader) const;
 	void RenderT(Shader* shader) const;
 
+	void RemoveTileEntity(const glm::vec3& coord);
+
+	void Update(CubeWorld* world);
+	void PostUpdate();
+
+public:
 	inline ChunkBlock GetBlock  (int index) const { return m_Data[index];         }
 	inline uint32_t   GetBlockID(int index) const { return m_Data[index].GetID(); }
 
-public:
+	inline const void PlaceBlock(uint32_t x, uint32_t y, uint32_t z, uint32_t data, Block::Side side = Block::Side::Front)
+	{
+		std::lock_guard<std::mutex> lock(m_Lock);
+
+		uint32_t id = ID(x, y, z);
+		const glm::vec3 coord = m_Coord + glm::vec3{ x, y, z };
+		if (BlocksManager::GetBlock(m_Data[id])->HasTileEntity())
+			RemoveTileEntity(coord);
+		
+		Block* block = BlocksManager::GetBlock(data);
+		if (block->HasTileEntity())
+			m_TileEntities[coord] = block->CreateTileEntity(coord);
+
+		m_Data[id].SetBlock(data, side);
+	}
+
+	inline const void PlaceBlockS(uint32_t indx, uint32_t data, Block::Side side = Block::Side::Front)
+	{
+		m_Data[indx].SetBlock(data, side);
+	}
+
 	inline Stage GetStage()                   const { return m_Stage; }
 	inline void  SetStage(const Stage& stage)       { m_Stage = stage; }
 	inline bool  IsStage (const Stage& stage) const { return m_Stage == stage; }
@@ -129,8 +163,13 @@ private:
 private:
 	ChunkBlock* m_Data = nullptr;
 
+	std::unordered_map<glm::vec3, TileEntity*> m_TileEntities;
+	std::queue<glm::vec3> m_TileEntitiesToRemove;
+
 	Stage m_Stage = Stage::Initialized;
 
 	uint32_t m_VAO [2]{ 0, 0 };
 	uint32_t m_VBIO[4]{ 0, 0, 0, 0 };
+
+	uint32_t m_BufferSize = 0, m_TBufferSize = 0;
 };

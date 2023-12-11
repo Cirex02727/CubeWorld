@@ -8,8 +8,6 @@
 
 #include "data/BlocksManager.h"
 
-#define ID(x, y, z) (y) + (x) * CHUNK_SIZE + (z) * CHUNK_SIZES
-
 Chunk::~Chunk()
 {
 	GLCall(glDeleteVertexArrays(2, m_VAO));
@@ -202,7 +200,7 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
                             dt[1] = x[1] + q[1];
                             dt[2] = x[2] + q[2];
                         }
-
+                        
                         blockFace  = BlocksManager::GetBlock(voxelFace);
                         blockFace1 = BlocksManager::GetBlock(voxelFace1);
                         if (!blockFace1->m_IsTransparent)
@@ -341,16 +339,6 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
                             }
 
                             verticesCount += 4;
-
-                            // Add Quad
-                            // quad(new Vector3f(x[0], x[1], x[2]),
-                            //     new Vector3f(x[0] + du[0], x[1] + du[1], x[2] + du[2]),
-                            //     new Vector3f(x[0] + du[0] + dv[0], x[1] + du[1] + dv[1], x[2] + du[2] + dv[2]),
-                            //     new Vector3f(x[0] + dv[0], x[1] + dv[1], x[2] + dv[2]),
-                            //     w,
-                            //     h,
-                            //     mask[n],
-                            //     backFace);
                         }
                         for (l = 0; l < h; ++l)
                             for (k = 0; k < w; ++k)
@@ -367,46 +355,96 @@ void Chunk::GenerateMesh(CubeWorld* world, Mesh& mesh)
 
 void Chunk::UploadMesh(const Mesh& mesh)
 {
+    if (m_Stage != Stage::Built && m_Stage != Stage::Uploaded)
+        return;
+
     m_IndicesCount = (uint32_t)mesh.indices.size();
     if (m_IndicesCount > 0)
     {
-        GLCall(glGenVertexArrays(1, m_VAO));
-        GLCall(glGenBuffers(2, m_VBIO));
+        if (m_BufferSize == 0) // Create new buffer
+        {
+            GLCall(glGenVertexArrays(1, m_VAO));
+            GLCall(glGenBuffers(2, m_VBIO));
 
-        // Opaque
-        GLCall(glBindVertexArray(m_VAO[0]));
+            // Opaque
+            GLCall(glBindVertexArray(m_VAO[0]));
 
-        GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[0]));
-        GLCall(glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(uint32_t), &mesh.vertices[0], GL_STATIC_DRAW));
-        GLCall(glEnableVertexAttribArray(0));
-        GLCall(glVertexAttribIPointer(0, 1, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (GLvoid*)0));
-        GLCall(glEnableVertexAttribArray(1));
-        GLCall(glVertexAttribIPointer(1, 1, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (GLvoid*)(sizeof(uint32_t))));
+            m_BufferSize = (uint32_t)mesh.vertices.size();
 
-        GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBIO[1]));
-        GLCall(glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_IndicesCount * sizeof(uint32_t), &mesh.indices[0], GL_STATIC_DRAW));
+            GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[0]));
+            GLCall(glBufferData(GL_ARRAY_BUFFER, m_BufferSize * sizeof(uint32_t), &mesh.vertices[0], GL_STATIC_DRAW));
+            GLCall(glEnableVertexAttribArray(0));
+            GLCall(glVertexAttribIPointer(0, 1, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (GLvoid*)0));
+            GLCall(glEnableVertexAttribArray(1));
+            GLCall(glVertexAttribIPointer(1, 1, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (GLvoid*)(sizeof(uint32_t))));
+
+            GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBIO[1]));
+            GLCall(glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_IndicesCount * sizeof(uint32_t), &mesh.indices[0], GL_STATIC_DRAW));
+        }
+        else if (m_BufferSize < mesh.vertices.size())
+        {
+            m_BufferSize = (uint32_t)mesh.vertices.size();
+
+            GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[0]));
+            GLCall(glBufferData(GL_ARRAY_BUFFER, m_BufferSize * sizeof(uint32_t), &mesh.vertices[0], GL_STATIC_DRAW));
+
+            GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBIO[1]));
+            GLCall(glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_IndicesCount * sizeof(uint32_t), &mesh.indices[0], GL_STATIC_DRAW));
+        }
+        else
+        {
+            GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[0]));
+            GLCall(glBufferSubData(GL_ARRAY_BUFFER, 0, mesh.vertices.size() * sizeof(uint32_t), &mesh.vertices[0]));
+
+            GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBIO[1]));
+            GLCall(glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, mesh.indices.size() * sizeof(uint32_t), &mesh.indices[0]));
+        }
     }
 
 
     // Translucent
     m_TIndicesCount = (uint32_t)mesh.tindices.size();
-    if (m_TIndicesCount == 0)
-        return;
+    if (m_TIndicesCount > 0)
+    {
+        if (m_TBufferSize == 0) // Create new buffer
+        {
+            GLCall(glGenVertexArrays(1, m_VAO + 1));
+            GLCall(glGenBuffers(2, m_VBIO + 2));
 
-    GLCall(glGenVertexArrays(1, m_VAO + 1));
-    GLCall(glGenBuffers(2, m_VBIO + 2));
+            // Opaque
+            GLCall(glBindVertexArray(m_VAO[1]));
 
-    GLCall(glBindVertexArray(m_VAO[1]));
+            m_TBufferSize = (uint32_t)mesh.tvertices.size();
 
-    GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[2]));
-    GLCall(glBufferData(GL_ARRAY_BUFFER, mesh.tvertices.size() * sizeof(uint32_t), &mesh.tvertices[0], GL_STATIC_DRAW));
-    GLCall(glEnableVertexAttribArray(0));
-    GLCall(glVertexAttribIPointer(0, 1, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (GLvoid*)0));
-    GLCall(glEnableVertexAttribArray(1));
-    GLCall(glVertexAttribIPointer(1, 1, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (GLvoid*)(sizeof(uint32_t))));
+            GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[2]));
+            GLCall(glBufferData(GL_ARRAY_BUFFER, m_TBufferSize * sizeof(uint32_t), &mesh.tvertices[0], GL_STATIC_DRAW));
+            GLCall(glEnableVertexAttribArray(0));
+            GLCall(glVertexAttribIPointer(0, 1, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (GLvoid*)0));
+            GLCall(glEnableVertexAttribArray(1));
+            GLCall(glVertexAttribIPointer(1, 1, GL_UNSIGNED_INT, 2 * sizeof(uint32_t), (GLvoid*)(sizeof(uint32_t))));
 
-    GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBIO[3]));
-    GLCall(glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_TIndicesCount * sizeof(uint32_t), &mesh.tindices[0], GL_STATIC_DRAW));
+            GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBIO[3]));
+            GLCall(glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_TIndicesCount * sizeof(uint32_t), &mesh.tindices[0], GL_STATIC_DRAW));
+        }
+        else if (m_TBufferSize < mesh.tvertices.size())
+        {
+            m_TBufferSize = (uint32_t)mesh.tvertices.size();
+
+            GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[2]));
+            GLCall(glBufferData(GL_ARRAY_BUFFER, m_TBufferSize * sizeof(uint32_t), &mesh.tvertices[0], GL_STATIC_DRAW));
+
+            GLCall(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_VBIO[3]));
+            GLCall(glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_TIndicesCount * sizeof(uint32_t), &mesh.tindices[0], GL_STATIC_DRAW));
+        }
+        else
+        {
+            GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[2]));
+            GLCall(glBufferSubData(GL_ARRAY_BUFFER, 0, mesh.tvertices.size() * sizeof(uint32_t), &mesh.tvertices[0]));
+
+            GLCall(glBindBuffer(GL_ARRAY_BUFFER, m_VBIO[3]));
+            GLCall(glBufferSubData(GL_ARRAY_BUFFER, 0, mesh.tindices.size() * sizeof(uint32_t), &mesh.tindices[0]));
+        }
+    }
 
     m_Stage = Stage::Uploaded;
 }
@@ -460,6 +498,28 @@ ChunkBlock Chunk::GetNeighborBlock(Chunk* chunks[26], int x[3], int d, bool isNe
     return chunks[neighborIndex]->GetBlock(ID(x_, y_, z_));
 }
 
+void Chunk::RemoveTileEntity(const glm::vec3& coord)
+{
+    m_TileEntitiesToRemove.push(coord);
+}
+
+void Chunk::Update(CubeWorld* world)
+{
+    for (auto& [_, tileEntity] : m_TileEntities)
+        tileEntity->Update(world);
+}
+
+void Chunk::PostUpdate()
+{
+    while (m_TileEntitiesToRemove.size() > 0)
+    {
+        const glm::vec3& coord = m_TileEntitiesToRemove.front();
+        m_TileEntities.erase(coord);
+
+        m_TileEntitiesToRemove.pop();
+    }
+}
+
 void Chunk::CalculateAO(Chunk* chunks[26], AO& ao, int x, int y, int z, int du[3], int dv[3]) const
 {
     // V0 (0, 0)
@@ -479,12 +539,12 @@ int Chunk::GetAONeighborBlock(Chunk* chunks[26], int x, int y, int z) const
     int neighborIndx = 0;
     bool upBorder = false, downBorder = false;
     if (CoordinateInBound(&x, &y, &z, &neighborIndx, &upBorder, &downBorder))
-        return m_Data[ID(x, y, z)].data != 0;
+        return !BlocksManager::GetBlock(m_Data[ID(x, y, z)])->m_IsTransparent;
     else if ((upBorder && m_Coord.y == CHUNK_MAX_HEIGHT - CHUNK_SIZE) ||
              (downBorder && m_Coord.y == 0))
         return 0;
     else
-        return chunks[neighborIndx]->GetBlock(ID(x, y, z)).data != 0;
+        return !BlocksManager::GetBlock(chunks[neighborIndx]->GetBlock(ID(x, y, z)))->m_IsTransparent;
 }
 
 bool Chunk::CoordinateInBound(int* x, int* y, int* z, int* neighborIndx, bool* upBorder, bool* downBorder) const

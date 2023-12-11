@@ -76,6 +76,11 @@ public:
 	bool ExistChunk(const glm::vec3& coord);
 	bool GetChunk(const glm::vec3& coord, Chunk** chunk);
 
+	void PlaceBlock(Chunk* chunk, glm::vec3 localCoord, int data, FaceSide side);
+	void PlaceBlock(glm::vec3 coord, Block* block, FaceSide side);
+
+	glm::vec3 WorldToChunkPos(glm::vec3& worldPos);
+
 	void OnWindowResize();
 
 private:

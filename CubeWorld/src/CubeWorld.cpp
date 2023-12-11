@@ -326,7 +326,8 @@ void CubeWorld::Update(float timestep)
 	if (Input::IsKeyDown(KeyCode::G))
 		m_Settings.MaxRenderDistance--;
 
-	const glm::vec3 cameraChunk = glm::floor(m_Camera->GetPosition() * CHUNK_SIZE_INV);
+	const glm::vec3 cameraPosition = m_Camera->GetPosition();
+	const glm::vec3 cameraChunk = glm::floor(cameraPosition * CHUNK_SIZE_INV);
 
 	{
 		int renderDist = m_Settings.RenderDistance, maxRenderDist = m_Settings.MaxRenderDistance;
@@ -424,6 +425,13 @@ void CubeWorld::Update(float timestep)
 			m_DirtyChunks.pop();
 		}
 	}
+
+
+	if (Input::IsKeyDown(KeyCode::E))
+		PlaceBlock(cameraPosition, BlocksManager::GetBlock("Dirt"), FaceSide::Front);
+
+	if (Input::IsKeyDown(KeyCode::Q))
+		PlaceBlock(cameraPosition, BlocksManager::GetBlock("Air"), FaceSide::Front);
 }
 
 void CubeWorld::Render()
@@ -482,16 +490,12 @@ void CubeWorld::Render()
 
 		GLCall(glDepthMask(GL_FALSE));
 
-		m_Shader->Bind();
-
 		for (const auto& [_, chunk] : inFrustum)
 		{
 			chunk->RenderT(shader);
 		}
 
 		GLCall(glDepthMask(GL_TRUE));
-
-		GLCall(glDisable(GL_BLEND));
 	}
 
 	// Render 2D Objects (UI)
@@ -529,6 +533,7 @@ void CubeWorld::Render()
 		glEnable(GL_DEPTH_TEST);
 	}
 
+	GLCall(glDisable(GL_BLEND));
 	glEnable(GL_CULL_FACE);
 }
 
@@ -771,6 +776,52 @@ bool CubeWorld::GetChunk(const glm::vec3& coord, Chunk** chunk)
 
 	*chunk = chunkIT->second;
 	return true;
+}
+
+void CubeWorld::PlaceBlock(Chunk* chunk, glm::vec3 coord, int data, FaceSide side)
+{
+	chunk->PlaceBlock((uint32_t)coord.x, (uint32_t)coord.y, (uint32_t)coord.z, data, (Block::Side)side);
+
+	const glm::vec3& chunkCoord = chunk->m_Coord;
+	SetChunkDirty(chunk, chunkCoord);
+
+	if (coord.x == 0)
+		SetChunkDirty(chunk, glm::vec3{ chunkCoord.x - CHUNK_SIZE, chunkCoord.y, chunkCoord.z });
+	if (coord.x == CHUNK_SIZE - 1)
+		SetChunkDirty(chunk, glm::vec3{ chunkCoord.x + CHUNK_SIZE, chunkCoord.y, chunkCoord.z });
+	if (coord.y == 0 && chunk->m_Coord.y > 0)
+		SetChunkDirty(chunk, glm::vec3{ chunkCoord.x, chunkCoord.y - CHUNK_SIZE, chunkCoord.z });
+	if (coord.y == CHUNK_SIZE - 1)
+		SetChunkDirty(chunk, glm::vec3{ chunkCoord.x, chunkCoord.y + CHUNK_SIZE, chunkCoord.z });
+	if (coord.z == 0)
+		SetChunkDirty(chunk, glm::vec3{ chunkCoord.x, chunkCoord.y, chunkCoord.z - CHUNK_SIZE });
+	if (coord.z == CHUNK_SIZE - 1)
+		SetChunkDirty(chunk, glm::vec3{ chunkCoord.x, chunkCoord.y, chunkCoord.z + CHUNK_SIZE });
+}
+
+void CubeWorld::PlaceBlock(glm::vec3 coord, Block* block, FaceSide side)
+{
+	if (!block->CanBePlaced(this, (int)std::floor(coord.x), (int)std::floor(coord.y), (int)std::floor(coord.z)))
+		return;
+
+	const glm::vec3 chunkCoord = WorldToChunkPos(coord);
+
+	Chunk* chunk;
+	if (GetChunk(chunkCoord, &chunk))
+		PlaceBlock(chunk, coord, block->m_ID, side);
+}
+
+glm::vec3 CubeWorld::WorldToChunkPos(glm::vec3& worldPos)
+{
+	const glm::vec3 chunkCoord = glm::floor(worldPos * CHUNK_SIZE_INV) * CHUNK_SIZE3;
+
+	worldPos = { (int)std::floor(worldPos.x) % CHUNK_SIZE, (int)std::floor(worldPos.y) % CHUNK_SIZE, (int)std::floor(worldPos.z) % CHUNK_SIZE };
+
+	if (worldPos.x < 0) worldPos.x += CHUNK_SIZE;
+	if (worldPos.y < 0) worldPos.y += CHUNK_SIZE;
+	if (worldPos.z < 0) worldPos.z += CHUNK_SIZE;
+
+	return chunkCoord;
 }
 
 void CubeWorld::OnWindowResize()
